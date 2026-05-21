@@ -12,6 +12,7 @@ using TaskFlow.Application.Features.Projects;
 using TaskFlow.Application.Features.Reports;
 using TaskFlow.Application.Features.Tasks;
 using TaskFlow.Application.Features.TimeTracking;
+using TaskFlow.Application.Features.Users;
 using TaskFlow.Infrastructure.Persistence;
 using TaskFlow.Infrastructure.Persistence.Interceptors;
 using TaskFlow.Infrastructure.Services;
@@ -49,6 +50,8 @@ public static class DependencyInjection
         services.AddScoped<IActivityService, ActivityService>();
         services.AddScoped<IReportService, ReportService>();
         services.AddScoped<IReportExporter, ReportExporter>();
+        services.AddScoped<IUserAdminService, UserAdminService>();
+        services.AddScoped<IInvitationService, InvitationService>();
         services.AddSingleton<IFileStorage, LocalFileStorage>();
         services.AddSingleton<IEmailSender, LoggingEmailSender>();
         // Realtime notifier: real SignalR implementation is registered by the API layer.
