@@ -39,6 +39,9 @@ public class TaskItem : TenantEntity
     public double Position { get; set; }
     public bool IsBillable { get; set; }
 
+    // Set once a "due soon" reminder notification has been sent (dedupe).
+    public DateTime? ReminderSentUtc { get; set; }
+
     public Project Project { get; set; } = null!;
     public TaskList? TaskList { get; set; }
     public TaskItem? ParentTask { get; set; }

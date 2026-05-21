@@ -47,5 +47,10 @@ public interface IAppDbContext
     DbSet<Plan> Plans { get; }
     DbSet<Subscription> Subscriptions { get; }
 
+    DbSet<Client> Clients { get; }
+    DbSet<Department> Departments { get; }
+    DbSet<Discussion> Discussions { get; }
+    DbSet<DiscussionPost> DiscussionPosts { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

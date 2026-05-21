@@ -10,6 +10,7 @@ using TaskFlow.Application.Features.Billing;
 using TaskFlow.Application.Features.Files;
 using TaskFlow.Application.Features.Integration;
 using TaskFlow.Application.Features.Notifications;
+using TaskFlow.Application.Features.Org;
 using TaskFlow.Application.Features.Projects;
 using TaskFlow.Application.Features.Recurring;
 using TaskFlow.Application.Features.Reports;
@@ -73,6 +74,12 @@ public static class DependencyInjection
 
         services.AddSingleton<IPaymentProvider, PayPalSandboxProvider>();
         services.AddScoped<IBillingService, BillingService>();
+
+        services.AddScoped<IClientService, ClientService>();
+        services.AddScoped<IDepartmentService, DepartmentService>();
+        services.AddScoped<ICategoryService, CategoryService>();
+        services.AddScoped<IDiscussionService, DiscussionService>();
+        services.AddHostedService<DeadlineReminderWorker>();
 
         services.AddSingleton<IFileStorage, LocalFileStorage>();
         services.AddSingleton<IEmailSender, LoggingEmailSender>();

@@ -49,6 +49,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<Plan> Plans => Set<Plan>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
 
+    public DbSet<Client> Clients => Set<Client>();
+    public DbSet<Department> Departments => Set<Department>();
+    public DbSet<Discussion> Discussions => Set<Discussion>();
+    public DbSet<DiscussionPost> DiscussionPosts => Set<DiscussionPost>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -121,6 +126,38 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             b.Property(x => x.Provider).HasMaxLength(30);
             b.Property(x => x.ProviderSubscriptionId).HasMaxLength(100);
             b.HasOne(x => x.Plan).WithMany().HasForeignKey(x => x.PlanId).OnDelete(DeleteBehavior.Restrict);
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+
+        // Org & collaboration gap-fill.
+        modelBuilder.Entity<Client>(b =>
+        {
+            b.ToTable("Clients");
+            b.Property(x => x.Name).HasMaxLength(150).IsRequired();
+            b.Property(x => x.CompanyName).HasMaxLength(150);
+            b.Property(x => x.ContactEmail).HasMaxLength(256);
+            b.Property(x => x.Phone).HasMaxLength(40);
+            b.Property(x => x.Notes).HasMaxLength(2000);
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+        modelBuilder.Entity<Department>(b =>
+        {
+            b.ToTable("Departments");
+            b.Property(x => x.Name).HasMaxLength(150).IsRequired();
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+        modelBuilder.Entity<Discussion>(b =>
+        {
+            b.ToTable("Discussions");
+            b.Property(x => x.Title).HasMaxLength(200).IsRequired();
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+        modelBuilder.Entity<DiscussionPost>(b =>
+        {
+            b.ToTable("DiscussionPosts");
+            b.Property(x => x.Body).HasMaxLength(4000).IsRequired();
+            b.HasOne(x => x.Discussion).WithMany(d => d.Posts)
+                .HasForeignKey(x => x.DiscussionId).OnDelete(DeleteBehavior.Cascade);
             b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
         });
     }
