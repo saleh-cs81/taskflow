@@ -104,7 +104,7 @@ public class DiscussionService(IAppDbContext db, ICurrentUser currentUser) : IDi
     public async Task<IReadOnlyList<DiscussionDto>> ListAsync(long projectId, CancellationToken ct = default)
         => await db.Discussions.AsNoTracking().Where(d => d.ProjectId == projectId)
             .OrderByDescending(d => d.CreatedAtUtc)
-            .Select(d => new DiscussionDto(d.Id, d.ProjectId, d.Title, d.CreatedById, d.Posts.Count, d.CreatedAtUtc))
+            .Select(d => new DiscussionDto(d.Id, d.ProjectId, d.Title, d.CreatedById ?? 0, d.Posts.Count, d.CreatedAtUtc))
             .ToListAsync(ct);
 
     public async Task<DiscussionDto> CreateAsync(CreateDiscussionRequest r, CancellationToken ct = default)
@@ -112,8 +112,8 @@ public class DiscussionService(IAppDbContext db, ICurrentUser currentUser) : IDi
         if (string.IsNullOrWhiteSpace(r.Title)) throw new ValidationAppException("error.validation");
         if (!await db.Projects.AnyAsync(p => p.Id == r.ProjectId, ct)) throw new NotFoundAppException("error.not_found");
 
-        var d = new Discussion { ProjectId = r.ProjectId, Title = r.Title.Trim(), CreatedById = currentUser.UserId ?? 0 };
-        db.Discussions.Add(d);
+        var d = new Discussion { ProjectId = r.ProjectId, Title = r.Title.Trim() };
+        db.Discussions.Add(d); // CreatedById stamped by the audit interceptor
         await db.SaveChangesAsync(ct);
 
         if (!string.IsNullOrWhiteSpace(r.FirstPost))
@@ -121,7 +121,7 @@ public class DiscussionService(IAppDbContext db, ICurrentUser currentUser) : IDi
             db.DiscussionPosts.Add(new DiscussionPost { DiscussionId = d.Id, AuthorId = currentUser.UserId ?? 0, Body = r.FirstPost.Trim() });
             await db.SaveChangesAsync(ct);
         }
-        return new DiscussionDto(d.Id, d.ProjectId, d.Title, d.CreatedById, string.IsNullOrWhiteSpace(r.FirstPost) ? 0 : 1, d.CreatedAtUtc);
+        return new DiscussionDto(d.Id, d.ProjectId, d.Title, d.CreatedById ?? 0, string.IsNullOrWhiteSpace(r.FirstPost) ? 0 : 1, d.CreatedAtUtc);
     }
 
     public async Task<IReadOnlyList<DiscussionPostDto>> GetPostsAsync(long discussionId, CancellationToken ct = default)

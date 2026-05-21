@@ -21,7 +21,7 @@ public class Discussion : TenantEntity
 {
     public long ProjectId { get; set; }
     public string Title { get; set; } = string.Empty;
-    public long CreatedById { get; set; }
+    // Creator is captured by the inherited audit field BaseEntity.CreatedById.
 
     public ICollection<DiscussionPost> Posts { get; set; } = new List<DiscussionPost>();
 }
