@@ -13,6 +13,7 @@ const UI = {
           <a class="nav-link ${active==='reports'?'active':''}" href="/reports.html" data-i18n="nav.reports"></a>
           <a class="nav-link ${active==='team'?'active':''}" href="/team.html" data-i18n="nav.team"></a>
           <a class="nav-link ${active==='integration'?'active':''}" href="/integration.html" data-i18n="nav.integration"></a>
+          <a class="nav-link ${active==='billing'?'active':''}" href="/billing.html" data-i18n="nav.billing"></a>
         </div>
         <div class="d-flex align-items-center gap-2">
           <div class="dropdown">

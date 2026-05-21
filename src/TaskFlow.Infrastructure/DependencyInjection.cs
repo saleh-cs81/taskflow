@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using TaskFlow.Application.Common.Interfaces;
 using TaskFlow.Application.Features.Auth;
+using TaskFlow.Application.Features.Billing;
 using TaskFlow.Application.Features.Files;
 using TaskFlow.Application.Features.Integration;
 using TaskFlow.Application.Features.Notifications;
@@ -69,6 +70,9 @@ public static class DependencyInjection
 
         services.AddScoped<IRecurringTaskService, RecurringTaskService>();
         services.AddHostedService<RecurringTaskWorker>();
+
+        services.AddSingleton<IPaymentProvider, PayPalSandboxProvider>();
+        services.AddScoped<IBillingService, BillingService>();
 
         services.AddSingleton<IFileStorage, LocalFileStorage>();
         services.AddSingleton<IEmailSender, LoggingEmailSender>();

@@ -44,5 +44,8 @@ public interface IAppDbContext
 
     DbSet<RecurringTaskRule> RecurringTaskRules { get; }
 
+    DbSet<Plan> Plans { get; }
+    DbSet<Subscription> Subscriptions { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

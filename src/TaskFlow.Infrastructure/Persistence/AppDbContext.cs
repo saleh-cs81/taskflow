@@ -46,6 +46,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
 
     public DbSet<RecurringTaskRule> RecurringTaskRules => Set<RecurringTaskRule>();
 
+    public DbSet<Plan> Plans => Set<Plan>();
+    public DbSet<Subscription> Subscriptions => Set<Subscription>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -99,6 +102,25 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         {
             b.ToTable("RecurringTaskRules");
             b.Property(x => x.TitleTemplate).HasMaxLength(300).IsRequired();
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+
+        // Billing: Plans are global; Subscriptions are tenant-scoped.
+        modelBuilder.Entity<Plan>(b =>
+        {
+            b.ToTable("Plans");
+            b.Property(x => x.Code).HasMaxLength(30).IsRequired();
+            b.Property(x => x.Name).HasMaxLength(80).IsRequired();
+            b.Property(x => x.Currency).HasMaxLength(3);
+            b.Property(x => x.PriceMonthly).HasPrecision(18, 2);
+            b.HasIndex(x => x.Code).IsUnique();
+        });
+        modelBuilder.Entity<Subscription>(b =>
+        {
+            b.ToTable("Subscriptions");
+            b.Property(x => x.Provider).HasMaxLength(30);
+            b.Property(x => x.ProviderSubscriptionId).HasMaxLength(100);
+            b.HasOne(x => x.Plan).WithMany().HasForeignKey(x => x.PlanId).OnDelete(DeleteBehavior.Restrict);
             b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
         });
     }
