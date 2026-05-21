@@ -13,7 +13,9 @@
 !/TaskFlow.sln
 !/TaskFlow-Architecture.md
 !/src/
+!/tests/
 !/deploy/
+!/.github/
 
 # --- Within the allowed folders, apply normal .NET ignores ---
 **/bin/
