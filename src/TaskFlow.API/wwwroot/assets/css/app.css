@@ -1,0 +1,68 @@
+:root {
+  --tf-primary: #4f46e5;
+  --tf-bg: #f4f5f7;
+}
+
+body {
+  background: var(--tf-bg);
+  min-height: 100vh;
+}
+
+/* Use logical properties so layout mirrors automatically for RTL. */
+.navbar-brand { font-weight: 700; }
+
+.auth-card {
+  max-width: 420px;
+  margin-inline: auto;
+  margin-block-start: 8vh;
+}
+
+/* Kanban board */
+.board {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding-block: 1rem;
+}
+.board-column {
+  background: #fff;
+  border-radius: .75rem;
+  min-width: 280px;
+  width: 280px;
+  padding: .75rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+}
+.board-column h6 { font-weight: 700; }
+.task-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: .5rem;
+  padding: .6rem .7rem;
+  margin-block-end: .5rem;
+  cursor: grab;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05);
+}
+.task-card:active { cursor: grabbing; }
+.task-card .priority {
+  inline-size: 8px; block-size: 8px; border-radius: 50%;
+  display: inline-block; margin-inline-end: 6px;
+}
+.priority-0 { background: #9ca3af; }
+.priority-1 { background: #3b82f6; }
+.priority-2 { background: #f59e0b; }
+.priority-3 { background: #ef4444; }
+
+.task-list-dropzone { min-height: 24px; }
+.sortable-ghost { opacity: .4; }
+
+/* Directional icons flip in RTL */
+[dir="rtl"] .flip-rtl { transform: scaleX(-1); }
+
+.notif-badge {
+  position: absolute;
+  top: 2px; inset-inline-end: 2px;
+  font-size: .6rem;
+}
+.notif-item.unread { background: #eef2ff; }
+.timer-running { color: #16a34a; font-weight: 600; }

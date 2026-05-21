@@ -1,0 +1,38 @@
+# This repo lives inside a shared workspace folder that contains many other,
+# unrelated projects. Default to ignoring EVERYTHING, then explicitly allow only
+# the TaskFlow files. This keeps `git add .` from ever pulling in other projects
+# or the large archive files that sit alongside this project.
+/*
+
+# --- TaskFlow files to track ---
+!/.gitignore
+!/.dockerignore
+!/README.md
+!/Dockerfile
+!/docker-compose.yml
+!/TaskFlow.sln
+!/TaskFlow-Architecture.md
+!/src/
+!/deploy/
+
+# --- Within the allowed folders, apply normal .NET ignores ---
+**/bin/
+**/obj/
+**/*.user
+**/*.suo
+**/.vs/
+**/artifacts/
+**/publish/
+**/.idea/
+**/.vscode/
+
+# Local secrets / runtime data
+**/appsettings.*.local.json
+**/App_Data/
+*.env
+
+# OS / logs
+Thumbs.db
+.DS_Store
+**/logs/
+*.log

@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+**/node_modules/
+**/*.user
+.git/
+.gitignore
+README.md
+TaskFlow-Architecture.md
+ChatFlow-Wireframes/
