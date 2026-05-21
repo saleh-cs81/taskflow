@@ -7,6 +7,7 @@ using Microsoft.IdentityModel.Tokens;
 using TaskFlow.Application.Common.Interfaces;
 using TaskFlow.Application.Features.Auth;
 using TaskFlow.Application.Features.Files;
+using TaskFlow.Application.Features.Integration;
 using TaskFlow.Application.Features.Notifications;
 using TaskFlow.Application.Features.Projects;
 using TaskFlow.Application.Features.Reports;
@@ -52,6 +53,19 @@ public static class DependencyInjection
         services.AddScoped<IReportExporter, ReportExporter>();
         services.AddScoped<IUserAdminService, UserAdminService>();
         services.AddScoped<IInvitationService, InvitationService>();
+
+        // Paymo integration: encrypt API keys at rest; pick sandbox vs real HTTP client.
+        services.AddDataProtection();
+        services.AddSingleton<IKeyProtector, DataProtectionKeyProtector>();
+        if (config.GetValue("Paymo:UseSandbox", true))
+            services.AddScoped<IPaymoClient, Integration.Paymo.PaymoSandboxClient>();
+        else
+        {
+            services.AddHttpClient<Integration.Paymo.PaymoHttpClient>();
+            services.AddScoped<IPaymoClient>(sp => sp.GetRequiredService<Integration.Paymo.PaymoHttpClient>());
+        }
+        services.AddScoped<IMigrationService, Integration.Paymo.MigrationService>();
+
         services.AddSingleton<IFileStorage, LocalFileStorage>();
         services.AddSingleton<IEmailSender, LoggingEmailSender>();
         // Realtime notifier: real SignalR implementation is registered by the API layer.

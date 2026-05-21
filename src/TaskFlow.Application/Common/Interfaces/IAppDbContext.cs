@@ -37,5 +37,10 @@ public interface IAppDbContext
     DbSet<Notification> Notifications { get; }
     DbSet<Mention> Mentions { get; }
 
+    DbSet<PaymoConnection> PaymoConnections { get; }
+    DbSet<MigrationJob> MigrationJobs { get; }
+    DbSet<EntityMapping> EntityMappings { get; }
+    DbSet<MigrationError> MigrationErrors { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

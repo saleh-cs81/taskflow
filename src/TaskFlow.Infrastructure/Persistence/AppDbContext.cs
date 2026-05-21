@@ -39,6 +39,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<Mention> Mentions => Set<Mention>();
 
+    public DbSet<PaymoConnection> PaymoConnections => Set<PaymoConnection>();
+    public DbSet<MigrationJob> MigrationJobs => Set<MigrationJob>();
+    public DbSet<EntityMapping> EntityMappings => Set<EntityMapping>();
+    public DbSet<MigrationError> MigrationErrors => Set<MigrationError>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -81,5 +86,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         modelBuilder.Entity<FileObject>().HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
         modelBuilder.Entity<Notification>().HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
         modelBuilder.Entity<Mention>().HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+
+        // Paymo integration.
+        modelBuilder.Entity<PaymoConnection>().HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        modelBuilder.Entity<MigrationJob>().HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        modelBuilder.Entity<EntityMapping>().HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        modelBuilder.Entity<MigrationError>().HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
     }
 }
