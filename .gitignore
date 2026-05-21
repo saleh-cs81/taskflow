@@ -14,8 +14,14 @@
 !/TaskFlow-Architecture.md
 !/src/
 !/tests/
+!/mobile/
 !/deploy/
 !/.github/
+
+# Flutter build artifacts (within /mobile)
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
 
 # --- Within the allowed folders, apply normal .NET ignores ---
 **/bin/
