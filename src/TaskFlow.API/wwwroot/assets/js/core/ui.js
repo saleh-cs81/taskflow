@@ -9,6 +9,7 @@ const UI = {
         <div class="navbar-nav me-auto">
           <a class="nav-link ${active==='dashboard'?'active':''}" href="/dashboard.html" data-i18n="nav.dashboard"></a>
           <a class="nav-link ${active==='board'?'active':''}" href="/board.html" data-i18n="nav.board"></a>
+          <a class="nav-link ${active==='calendar'?'active':''}" href="/calendar.html" data-i18n="nav.calendar"></a>
           <a class="nav-link ${active==='reports'?'active':''}" href="/reports.html" data-i18n="nav.reports"></a>
           <a class="nav-link ${active==='team'?'active':''}" href="/team.html" data-i18n="nav.team"></a>
           <a class="nav-link ${active==='integration'?'active':''}" href="/integration.html" data-i18n="nav.integration"></a>
