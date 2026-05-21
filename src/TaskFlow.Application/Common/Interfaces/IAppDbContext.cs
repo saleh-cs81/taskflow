@@ -42,5 +42,7 @@ public interface IAppDbContext
     DbSet<EntityMapping> EntityMappings { get; }
     DbSet<MigrationError> MigrationErrors { get; }
 
+    DbSet<RecurringTaskRule> RecurringTaskRules { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

@@ -44,6 +44,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<EntityMapping> EntityMappings => Set<EntityMapping>();
     public DbSet<MigrationError> MigrationErrors => Set<MigrationError>();
 
+    public DbSet<RecurringTaskRule> RecurringTaskRules => Set<RecurringTaskRule>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -92,5 +94,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         modelBuilder.Entity<MigrationJob>().HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
         modelBuilder.Entity<EntityMapping>().HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
         modelBuilder.Entity<MigrationError>().HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+
+        modelBuilder.Entity<RecurringTaskRule>(b =>
+        {
+            b.ToTable("RecurringTaskRules");
+            b.Property(x => x.TitleTemplate).HasMaxLength(300).IsRequired();
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
     }
 }

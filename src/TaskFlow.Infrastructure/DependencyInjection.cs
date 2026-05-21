@@ -10,6 +10,7 @@ using TaskFlow.Application.Features.Files;
 using TaskFlow.Application.Features.Integration;
 using TaskFlow.Application.Features.Notifications;
 using TaskFlow.Application.Features.Projects;
+using TaskFlow.Application.Features.Recurring;
 using TaskFlow.Application.Features.Reports;
 using TaskFlow.Application.Features.Tasks;
 using TaskFlow.Application.Features.TimeTracking;
@@ -65,6 +66,9 @@ public static class DependencyInjection
             services.AddScoped<IPaymoClient>(sp => sp.GetRequiredService<Integration.Paymo.PaymoHttpClient>());
         }
         services.AddScoped<IMigrationService, Integration.Paymo.MigrationService>();
+
+        services.AddScoped<IRecurringTaskService, RecurringTaskService>();
+        services.AddHostedService<RecurringTaskWorker>();
 
         services.AddSingleton<IFileStorage, LocalFileStorage>();
         services.AddSingleton<IEmailSender, LoggingEmailSender>();
