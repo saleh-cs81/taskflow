@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -59,7 +60,14 @@ public static class DependencyInjection
         services.AddScoped<IInvitationService, InvitationService>();
 
         // Paymo integration: encrypt API keys at rest; pick sandbox vs real HTTP client.
-        services.AddDataProtection();
+        // Persist the data-protection key ring to a stable folder so encrypted API keys
+        // survive app restarts/recycles (otherwise the ring regenerates and decryption fails).
+        var keysDir = config["DataProtection:KeysPath"]
+            ?? Path.Combine(AppContext.BaseDirectory, "App_Data", "dp-keys");
+        Directory.CreateDirectory(keysDir);
+        services.AddDataProtection()
+            .PersistKeysToFileSystem(new DirectoryInfo(keysDir))
+            .SetApplicationName("TaskFlow");
         services.AddSingleton<IKeyProtector, DataProtectionKeyProtector>();
         if (config.GetValue("Paymo:UseSandbox", true))
             services.AddScoped<IPaymoClient, Integration.Paymo.PaymoSandboxClient>();
@@ -70,6 +78,8 @@ public static class DependencyInjection
             services.AddScoped<IPaymoClient>(sp => sp.GetRequiredService<Integration.Paymo.PaymoHttpClient>());
         }
         services.AddScoped<IMigrationService, Integration.Paymo.MigrationService>();
+        services.AddSingleton<IMigrationQueue, Integration.Paymo.MigrationQueue>();
+        services.AddHostedService<Integration.Paymo.MigrationBackgroundService>();
 
         services.AddScoped<IRecurringTaskService, RecurringTaskService>();
         services.AddHostedService<RecurringTaskWorker>();

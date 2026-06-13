@@ -30,6 +30,13 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
         }
     }
 
+    public async Task<IReadOnlyList<PaymoUser>> GetUsersAsync(string apiKey, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "users", ct);
+        return Parse(root, "users", el => new PaymoUser(
+            GetLong(el, "id"), GetString(el, "name") ?? "", GetString(el, "email"), GetBool(el, "active")));
+    }
+
     public async Task<IReadOnlyList<PaymoProject>> GetProjectsAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
     {
         // Projects have no project_id filter; only apply an incremental updated_on filter.
@@ -51,7 +58,17 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
         var root = await GetJsonAsync(apiKey, "tasks" + WhereSuffix($"project_id={paymoProjectId}", modifiedSinceUtc), ct);
         return Parse(root, "tasks", el => new PaymoTask(
             GetLong(el, "id"), GetLong(el, "project_id"), GetNullableLong(el, "tasklist_id"),
-            GetString(el, "name") ?? "", GetString(el, "description"), GetBool(el, "complete"), GetDate(el, "due_date")));
+            GetString(el, "name") ?? "", GetString(el, "description"), GetBool(el, "complete"), GetDate(el, "due_date"),
+            FirstUserId(el, "users"), GetInt(el, "priority")));
+    }
+
+    // Paymo task 'users' is an array of assigned user ids; take the first as primary assignee.
+    private static long? FirstUserId(JsonElement el, string prop)
+    {
+        if (el.TryGetProperty(prop, out var arr) && arr.ValueKind == JsonValueKind.Array)
+            foreach (var item in arr.EnumerateArray())
+                if (item.ValueKind == JsonValueKind.Number && item.TryGetInt64(out var id)) return id;
+        return null;
     }
 
     public async Task<IReadOnlyList<PaymoTimeEntry>> GetTimeEntriesAsync(string apiKey, long paymoProjectId, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
@@ -87,6 +104,7 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
 
             list.Add(new PaymoTimeEntry(
                 GetLong(el, "id"), GetLong(el, "project_id"), GetNullableLong(el, "task_id"),
+                GetNullableLong(el, "user_id"),
                 start, end, duration, GetString(el, "description"),
                 GetBool(el, "billed")));   // Paymo entries expose 'billed', not 'billable'
         }

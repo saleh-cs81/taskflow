@@ -19,17 +19,30 @@ public class IntegrationController(IMigrationService migration) : ControllerBase
     public async Task<ActionResult<PaymoConnectionDto>> Connect(ConnectPaymoRequest request, CancellationToken ct)
         => Ok(await migration.ConnectAsync(request, ct));
 
+    // Queues the import and returns a job id immediately; poll jobs/{id} for progress.
     [HttpPost("migrate")]
-    public async Task<ActionResult<MigrationJobDto>> Migrate(CancellationToken ct)
-        => Ok(await migration.RunAsync(MigrationJobType.Full, ct));
+    public async Task<ActionResult<StartMigrationResult>> Migrate(CancellationToken ct)
+        => Ok(await migration.StartAsync(MigrationJobType.Full, ct));
 
     [HttpPost("sync")]
-    public async Task<ActionResult<MigrationJobDto>> Sync(CancellationToken ct)
-        => Ok(await migration.RunAsync(MigrationJobType.Incremental, ct));
+    public async Task<ActionResult<StartMigrationResult>> Sync(CancellationToken ct)
+        => Ok(await migration.StartAsync(MigrationJobType.Incremental, ct));
+
+    // Clears imported data so the migration can be re-run from a clean slate.
+    [HttpPost("reset")]
+    public async Task<IActionResult> Reset(CancellationToken ct)
+    {
+        await migration.ResetAsync(ct);
+        return NoContent();
+    }
 
     [HttpGet("jobs")]
     public async Task<ActionResult<IReadOnlyList<MigrationJobDto>>> Jobs(CancellationToken ct)
         => Ok(await migration.ListJobsAsync(ct));
+
+    [HttpGet("jobs/latest")]
+    public async Task<ActionResult<MigrationJobDto?>> Latest(CancellationToken ct)
+        => Ok(await migration.GetLatestJobAsync(ct));
 
     [HttpGet("jobs/{id:long}")]
     public async Task<ActionResult<MigrationJobDto>> Job(long id, CancellationToken ct)

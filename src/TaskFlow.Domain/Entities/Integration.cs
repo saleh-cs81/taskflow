@@ -18,6 +18,9 @@ public class MigrationJob : TenantEntity
     public int TotalRecords { get; set; }
     public int ProcessedRecords { get; set; }
     public int ErrorCount { get; set; }
+    // Outer-loop progress so the UI can render a percentage while running.
+    public int ProjectsTotal { get; set; }
+    public int ProjectsDone { get; set; }
     public DateTime? StartedUtc { get; set; }
     public DateTime? FinishedUtc { get; set; }
     public string? Message { get; set; }
