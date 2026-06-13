@@ -49,11 +49,27 @@ public class PaymoSandboxClient : IPaymoClient
 
     private static readonly PaymoTask[] Tasks =
     [
-        new(3001, 1001, 2001, "Design landing page", "Hero + features", false, DateTime.UtcNow.AddDays(3), DateTime.UtcNow.AddDays(-1), null, 75, 1, "MKT-1", [5001]),
-        new(3002, 1001, 2002, "Set up analytics", null, false, null, null, null, 50, 2, "MKT-2", [5002, 5001]),
-        new(3003, 1001, 2002, "Write copy", "Marketing copy", true, null, null, DateTime.UtcNow.AddDays(-2), 25, 3, "MKT-3", [5001]),
-        new(3004, 1002, 2003, "Auth screens", "Login + signup", false, null, null, null, 100, 1, "APP-1", [5002]),
-        new(3005, 1002, 2003, "Push notifications", null, false, null, null, null, 50, 2, "APP-2", []),
+        new(3001, 1001, 2001, "Design landing page", "Hero + features", false, DateTime.UtcNow.AddDays(3), DateTime.UtcNow.AddDays(-1), null, 75, 1, "MKT-1", 30001, [5001]),
+        new(3002, 1001, 2002, "Set up analytics", null, false, null, null, null, 50, 2, "MKT-2", 30002, [5002, 5001]),
+        new(3003, 1001, 2002, "Write copy", "Marketing copy", true, null, null, DateTime.UtcNow.AddDays(-2), 25, 3, "MKT-3", 30003, [5001]),
+        new(3004, 1002, 2003, "Auth screens", "Login + signup", false, null, null, null, 100, 1, "APP-1", 30004, [5002]),
+        new(3005, 1002, 2003, "Push notifications", null, false, null, null, null, 50, 2, "APP-2", null, []),
+    ];
+
+    private static readonly PaymoDiscussion[] Discussions =
+    [
+        new(9201, 1001, "Kickoff", "Welcome to the project!", 40001, 5001),
+    ];
+
+    private static readonly PaymoComment[] Comments =
+    [
+        new(9301, 30001, "Looks great, ship it.", 5002, DateTime.UtcNow.AddDays(-1)),   // on task 3001
+        new(9302, 40001, "Thanks team!", 5001, DateTime.UtcNow.AddHours(-5)),            // on discussion 9201
+    ];
+
+    private static readonly PaymoFile[] Files =
+    [
+        new(9401, "brief.pdf", 1001, 3001, null, null, 1234, "application/pdf"),
     ];
 
     private static readonly PaymoSubtask[] Subtasks =
@@ -105,4 +121,16 @@ public class PaymoSandboxClient : IPaymoClient
 
     public Task<IReadOnlyList<PaymoTimeEntry>> GetTimeEntriesAsync(string apiKey, long paymoProjectId, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<PaymoTimeEntry>>(TimeEntries.Where(t => t.ProjectId == paymoProjectId).ToList());
+
+    public Task<IReadOnlyList<PaymoDiscussion>> GetDiscussionsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoDiscussion>>(Discussions.Where(d => d.ProjectId == paymoProjectId).ToList());
+
+    public Task<IReadOnlyList<PaymoComment>> GetCommentsAsync(string apiKey, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoComment>>(Comments);
+
+    public Task<IReadOnlyList<PaymoFile>> GetFilesAsync(string apiKey, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoFile>>(Files);
+
+    public Task<(byte[] Bytes, string ContentType)?> GetFileBytesAsync(string apiKey, long paymoFileId, CancellationToken ct = default)
+        => Task.FromResult<(byte[], string)?>((System.Text.Encoding.UTF8.GetBytes($"sandbox file {paymoFileId}"), "application/octet-stream"));
 }

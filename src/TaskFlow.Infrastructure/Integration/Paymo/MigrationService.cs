@@ -18,6 +18,7 @@ public class MigrationService(
     ITenantContext tenant,
     IPasswordHasher hasher,
     IMigrationQueue queue,
+    IFileStorage fileStorage,
     IDateTime clock,
     ILogger<MigrationService> logger) : IMigrationService
 {
@@ -134,7 +135,9 @@ public class MigrationService(
             job.Message = $"Imported {userMap.Count} users, {clientMap.Count} clients…";
             await db.SaveChangesAsync(ct);
 
-            // 4) Projects (outer loop drives the progress bar).
+            // 4) Projects (outer loop drives the progress bar). Accumulate cross-project
+            // maps so comments/files (fetched globally) can be anchored afterwards.
+            var ctx = new ImportContext(userMap);
             var projects = await paymo.GetProjectsAsync(apiKey, since, ct);
             job.ProjectsTotal = projects.Count;
             await db.SaveChangesAsync(ct);
@@ -145,12 +148,20 @@ public class MigrationService(
                 try { localProjectId = await UpsertProjectAsync(p, clientMap, statusMap, ct); job.ProcessedRecords++; }
                 catch (Exception ex) { await RecordError(job, "Project", p.Id, ex, p, ct); job.ProjectsDone++; await db.SaveChangesAsync(ct); continue; }
 
-                await ImportProjectChildren(job, apiKey, p.Id, localProjectId, since, userMap, ct);
+                ctx.ProjectByPaymo[p.Id] = localProjectId;
+                await ImportProjectChildren(job, apiKey, p.Id, localProjectId, since, ctx, ct);
 
                 job.ProjectsDone++;
                 job.Message = $"Imported {job.ProjectsDone}/{job.ProjectsTotal} projects · {job.ProcessedRecords} records";
                 await db.SaveChangesAsync(ct);   // persist progress per project for live polling
             }
+
+            // 5) Comments (global; anchored to imported task/discussion threads).
+            await ImportCommentsAsync(job, apiKey, ctx, ct);
+
+            // 6) Files (global; downloaded + stored, attached to task/comment/project).
+            await ImportFilesAsync(job, apiKey, ctx, ct);
+            await db.SaveChangesAsync(ct);
 
             job.TotalRecords = job.ProcessedRecords + job.ErrorCount;
             job.Status = job.ErrorCount > 0 ? MigrationJobStatus.CompletedWithErrors : MigrationJobStatus.Completed;
@@ -168,9 +179,23 @@ public class MigrationService(
         await db.SaveChangesAsync(ct);
     }
 
-    private async Task ImportProjectChildren(MigrationJob job, string apiKey, long paymoProjectId, long localProjectId,
-        DateTime? since, IReadOnlyDictionary<long, long> userMap, CancellationToken ct)
+    // Cross-project maps so globally-fetched comments/files can be anchored.
+    private sealed class ImportContext(IReadOnlyDictionary<long, long> userMap)
     {
+        public IReadOnlyDictionary<long, long> UserMap { get; } = userMap;
+        public Dictionary<long, long> ProjectByPaymo { get; } = new();
+        public Dictionary<long, long> TaskByPaymo { get; } = new();
+        public Dictionary<long, long> DiscussionByPaymo { get; } = new();
+        public Dictionary<long, long> ThreadToTask { get; } = new();        // paymo thread_id -> local task id
+        public Dictionary<long, long> ThreadToDiscussion { get; } = new();  // paymo thread_id -> local discussion id
+        public Dictionary<long, long> CommentByPaymo { get; } = new();      // paymo comment id -> local Comment id
+    }
+
+    private async Task ImportProjectChildren(MigrationJob job, string apiKey, long paymoProjectId, long localProjectId,
+        DateTime? since, ImportContext ctx, CancellationToken ct)
+    {
+        var userMap = ctx.UserMap;
+
         // Milestones (project-level), so tasks can be linked through their task list.
         var milestoneMap = new Dictionary<long, long>();
         foreach (var m in await paymo.GetMilestonesAsync(apiKey, paymoProjectId, ct))
@@ -194,7 +219,6 @@ public class MigrationService(
         }
 
         // Tasks (+ multi-assignee + milestone linkage via their list).
-        var taskMap = new Dictionary<long, long>();
         foreach (var t in await paymo.GetTasksAsync(apiKey, paymoProjectId, since, ct))
         {
             try
@@ -203,7 +227,9 @@ public class MigrationService(
                 long? localMilestone = t.TaskListId is { } lid2 && listMilestone.TryGetValue(lid2, out var pm)
                     && milestoneMap.TryGetValue(pm, out var lm) ? lm : null;
                 var assignees = t.AssigneeUserIds.Where(userMap.ContainsKey).Select(a => userMap[a]).ToList();
-                taskMap[t.Id] = await UpsertTaskAsync(t, localProjectId, localList, localMilestone, assignees, ct);
+                var localTaskId = await UpsertTaskAsync(t, localProjectId, localList, localMilestone, assignees, ct);
+                ctx.TaskByPaymo[t.Id] = localTaskId;
+                if (t.ThreadId is { } th) ctx.ThreadToTask[th] = localTaskId;
                 job.ProcessedRecords++;
             }
             catch (Exception ex) { await RecordError(job, "Task", t.Id, ex, t, ct); }
@@ -212,9 +238,23 @@ public class MigrationService(
         // Subtasks -> local checklist items under the parent task.
         foreach (var s in await paymo.GetSubtasksAsync(apiKey, paymoProjectId, ct))
         {
-            if (!taskMap.TryGetValue(s.TaskId, out var localTask)) continue;
+            if (!ctx.TaskByPaymo.TryGetValue(s.TaskId, out var localTask)) continue;
             try { await UpsertSubtaskAsync(s, localTask, ct); job.ProcessedRecords++; }
             catch (Exception ex) { await RecordError(job, "Subtask", s.Id, ex, s, ct); }
+        }
+
+        // Discussions (+ description as first post).
+        foreach (var d in await paymo.GetDiscussionsAsync(apiKey, paymoProjectId, ct))
+        {
+            try
+            {
+                long dAuthor = d.UserId is { } du && userMap.TryGetValue(du, out var dl) ? dl : _runUserId;
+                var localDisc = await UpsertDiscussionAsync(d, localProjectId, dAuthor, ct);
+                ctx.DiscussionByPaymo[d.Id] = localDisc;
+                if (d.ThreadId is { } th) ctx.ThreadToDiscussion[th] = localDisc;
+                job.ProcessedRecords++;
+            }
+            catch (Exception ex) { await RecordError(job, "Discussion", d.Id, ex, d, ct); }
         }
 
         // Time entries.
@@ -222,13 +262,71 @@ public class MigrationService(
         {
             try
             {
-                long? localTask = e.TaskId is { } tid && taskMap.TryGetValue(tid, out var lt) ? lt : null;
+                long? localTask = e.TaskId is { } tid && ctx.TaskByPaymo.TryGetValue(tid, out var lt) ? lt : null;
                 long owner = e.UserId is { } eu && userMap.TryGetValue(eu, out var lo) ? lo : _runUserId;
                 await UpsertTimeEntryAsync(e, localProjectId, localTask, owner, ct);
                 job.ProcessedRecords++;
             }
             catch (Exception ex) { await RecordError(job, "TimeEntry", e.Id, ex, e, ct); }
         }
+    }
+
+    // Comments are polymorphic: anchor by thread_id to a task (-> Comment) or a discussion (-> DiscussionPost).
+    private async Task ImportCommentsAsync(MigrationJob job, string apiKey, ImportContext ctx, CancellationToken ct)
+    {
+        IReadOnlyList<PaymoComment> comments;
+        try { comments = await paymo.GetCommentsAsync(apiKey, ct); }
+        catch (Exception ex) { await RecordError(job, "Comment", 0, ex, "comments", ct); return; }
+
+        foreach (var c in comments)
+        {
+            try
+            {
+                long author = c.UserId is { } u && ctx.UserMap.TryGetValue(u, out var lu) ? lu : _runUserId;
+                if (c.ThreadId is { } th && ctx.ThreadToTask.TryGetValue(th, out var localTask))
+                {
+                    var local = await UpsertCommentAsync(c, localTask, author, ct);
+                    if (local is { } lid) ctx.CommentByPaymo[c.Id] = lid;
+                    job.ProcessedRecords++;
+                }
+                else if (c.ThreadId is { } th2 && ctx.ThreadToDiscussion.TryGetValue(th2, out var localDisc))
+                {
+                    await UpsertDiscussionPostAsync(c, localDisc, author, ct);
+                    job.ProcessedRecords++;
+                }
+                // else: comment on an un-imported thread (file/project) — skipped.
+            }
+            catch (Exception ex) { await RecordError(job, "Comment", c.Id, ex, c, ct); }
+        }
+        job.Message = $"Imported comments… {job.ProcessedRecords} records";
+        await db.SaveChangesAsync(ct);
+    }
+
+    private async Task ImportFilesAsync(MigrationJob job, string apiKey, ImportContext ctx, CancellationToken ct)
+    {
+        IReadOnlyList<PaymoFile> files;
+        try { files = await paymo.GetFilesAsync(apiKey, ct); }
+        catch (Exception ex) { await RecordError(job, "File", 0, ex, "files", ct); return; }
+
+        foreach (var f in files)
+        {
+            try
+            {
+                // Resolve attachment target (Task > Comment > Project).
+                AttachmentTargetType? targetType = null; long targetId = 0;
+                if (f.TaskId is { } tid && ctx.TaskByPaymo.TryGetValue(tid, out var lt)) { targetType = AttachmentTargetType.Task; targetId = lt; }
+                else if (f.CommentId is { } cid && ctx.CommentByPaymo.TryGetValue(cid, out var lc)) { targetType = AttachmentTargetType.Comment; targetId = lc; }
+                else if (f.ProjectId is { } pid && ctx.ProjectByPaymo.TryGetValue(pid, out var lp)) { targetType = AttachmentTargetType.Project; targetId = lp; }
+                else if (f.DiscussionId is { } did && ctx.DiscussionByPaymo.TryGetValue(did, out _) && f.ProjectId is { } pid2 && ctx.ProjectByPaymo.TryGetValue(pid2, out var lp2)) { targetType = AttachmentTargetType.Project; targetId = lp2; }
+                if (targetType is null) continue; // no imported target to attach to
+
+                await UpsertFileAsync(f, targetType.Value, targetId, apiKey, ct);
+                job.ProcessedRecords++;
+            }
+            catch (Exception ex) { await RecordError(job, "File", f.Id, ex, f, ct); }
+        }
+        job.Message = $"Imported files… {job.ProcessedRecords} records";
+        await db.SaveChangesAsync(ct);
     }
 
     // --- Idempotent upserts keyed by EntityMapping(EntityType, PaymoId) ---
@@ -359,6 +457,72 @@ public class MigrationService(
         db.ChecklistItems.Add(created);
         await db.SaveChangesAsync(ct);
         await AddMappingAsync("Subtask", s.Id, created.Id, ct);
+    }
+
+    private async Task<long> UpsertDiscussionAsync(PaymoDiscussion d, long localProjectId, long author, CancellationToken ct)
+    {
+        var existing = await FindMappingAsync("Discussion", d.Id, ct);
+        if (existing is not null)
+        {
+            var row = await db.Discussions.FirstOrDefaultAsync(x => x.Id == existing.LocalId, ct);
+            if (row is not null) row.Title = d.Name;
+            existing.LastSyncedUtc = clock.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return existing.LocalId;
+        }
+        var created = new Discussion { ProjectId = localProjectId, Title = d.Name };
+        db.Discussions.Add(created);
+        await db.SaveChangesAsync(ct);
+        created.CreatedById = author;                              // restore real author (interceptor set it to null in bg)
+        if (!string.IsNullOrWhiteSpace(d.Description))
+            db.DiscussionPosts.Add(new DiscussionPost { DiscussionId = created.Id, AuthorId = author, Body = d.Description.Trim() });
+        await db.SaveChangesAsync(ct);
+        await AddMappingAsync("Discussion", d.Id, created.Id, ct);
+        return created.Id;
+    }
+
+    private async Task<long?> UpsertCommentAsync(PaymoComment c, long localTaskId, long author, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(c.Content)) return null;
+        var existing = await FindMappingAsync("Comment", c.Id, ct);
+        if (existing is not null) { existing.LastSyncedUtc = clock.UtcNow; await db.SaveChangesAsync(ct); return existing.LocalId; }
+        var created = new Comment { TargetType = CommentTargetType.Task, TargetId = localTaskId, AuthorId = author, Body = c.Content.Trim() };
+        db.Comments.Add(created);
+        await db.SaveChangesAsync(ct);
+        await AddMappingAsync("Comment", c.Id, created.Id, ct);
+        return created.Id;
+    }
+
+    private async Task UpsertDiscussionPostAsync(PaymoComment c, long localDiscussionId, long author, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(c.Content)) return;
+        var existing = await FindMappingAsync("DiscussionPost", c.Id, ct);
+        if (existing is not null) { existing.LastSyncedUtc = clock.UtcNow; await db.SaveChangesAsync(ct); return; }
+        var created = new DiscussionPost { DiscussionId = localDiscussionId, AuthorId = author, Body = c.Content.Trim() };
+        db.DiscussionPosts.Add(created);
+        await db.SaveChangesAsync(ct);
+        await AddMappingAsync("DiscussionPost", c.Id, created.Id, ct);
+    }
+
+    private async Task UpsertFileAsync(PaymoFile f, AttachmentTargetType targetType, long targetId, string apiKey, CancellationToken ct)
+    {
+        var existing = await FindMappingAsync("File", f.Id, ct);
+        if (existing is not null) { existing.LastSyncedUtc = clock.UtcNow; await db.SaveChangesAsync(ct); return; }
+
+        var download = await paymo.GetFileBytesAsync(apiKey, f.Id, ct)
+            ?? throw new InvalidOperationException($"File {f.Id} could not be downloaded.");
+        using var stream = new MemoryStream(download.Bytes);
+        var stored = await fileStorage.SaveAsync(stream, f.FileName, tenant.TenantId ?? 0, ct);
+
+        var created = new FileObject
+        {
+            TargetType = targetType, TargetId = targetId, FileName = f.FileName,
+            ContentType = string.IsNullOrWhiteSpace(f.Mime) ? download.ContentType : f.Mime!,
+            SizeBytes = stored.SizeBytes, StorageKey = stored.StorageKey, Version = 1
+        };
+        db.Files.Add(created);
+        await db.SaveChangesAsync(ct);
+        await AddMappingAsync("File", f.Id, created.Id, ct);
     }
 
     private async Task<long> UpsertProjectAsync(PaymoProject p, IReadOnlyDictionary<long, long> clientMap,
@@ -515,8 +679,12 @@ public class MigrationService(
         long[] Ids(string type) => maps.Where(m => m.EntityType == type).Select(m => m.LocalId).Distinct().ToArray();
 
         // Child → parent order; ExecuteDelete is a hard delete (bypasses soft-delete interceptor).
+        var fileIds = Ids("File");
         var entryIds = Ids("TimeEntry");
         var subtaskIds = Ids("Subtask");      // -> local ChecklistItems
+        var commentIds = Ids("Comment");
+        var discPostIds = Ids("DiscussionPost");
+        var discIds = Ids("Discussion");
         var taskIds = Ids("Task");
         var listIds = Ids("TaskList");
         var milestoneIds = Ids("Milestone");
@@ -525,8 +693,13 @@ public class MigrationService(
         var clientIds = Ids("Client");
         var userIds = Ids("User");
 
+        if (fileIds.Length > 0) await db.Files.IgnoreQueryFilters().Where(x => fileIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
         if (entryIds.Length > 0) await db.TimeEntries.IgnoreQueryFilters().Where(x => entryIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
         if (subtaskIds.Length > 0) await db.ChecklistItems.IgnoreQueryFilters().Where(x => subtaskIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
+        if (commentIds.Length > 0) await db.Comments.IgnoreQueryFilters().Where(x => commentIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
+        if (discPostIds.Length > 0) await db.DiscussionPosts.IgnoreQueryFilters().Where(x => discPostIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
+        if (discIds.Length > 0) await db.DiscussionPosts.IgnoreQueryFilters().Where(x => discIds.Contains(x.DiscussionId)).ExecuteDeleteAsync(ct);
+        if (discIds.Length > 0) await db.Discussions.IgnoreQueryFilters().Where(x => discIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
         if (taskIds.Length > 0) await db.TaskAssignees.Where(x => taskIds.Contains(x.TaskId)).ExecuteDeleteAsync(ct);
         if (taskIds.Length > 0) await db.Tasks.IgnoreQueryFilters().Where(x => taskIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
         if (listIds.Length > 0) await db.TaskLists.IgnoreQueryFilters().Where(x => listIds.Contains(x.Id)).ExecuteDeleteAsync(ct);

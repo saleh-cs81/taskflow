@@ -91,7 +91,7 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
             GetString(el, "name") ?? "", GetString(el, "description"), GetBool(el, "complete"),
             GetDate(el, "due_date"), GetDate(el, "start_date"), GetDate(el, "completed_on"),
             GetInt(el, "priority"), GetInt(el, "seq"), GetString(el, "code"),
-            AllUserIds(el, "users")));
+            GetNullableLong(el, "thread_id"), AllUserIds(el, "users")));
     }
 
     public async Task<IReadOnlyList<PaymoSubtask>> GetSubtasksAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
@@ -148,6 +148,45 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
                 GetBool(el, "billable"), GetBool(el, "billed")));   // real billable flag + invoiced flag
         }
         return list;
+    }
+
+    public async Task<IReadOnlyList<PaymoDiscussion>> GetDiscussionsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "discussions" + WhereSuffix($"project_id={paymoProjectId}", null), ct);
+        return Parse(root, "discussions", el => new PaymoDiscussion(
+            GetLong(el, "id"), GetLong(el, "project_id"), GetString(el, "name") ?? "",
+            GetString(el, "description"), GetNullableLong(el, "thread_id"), GetNullableLong(el, "user_id")));
+    }
+
+    public async Task<IReadOnlyList<PaymoComment>> GetCommentsAsync(string apiKey, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "comments", ct);
+        return Parse(root, "comments", el => new PaymoComment(
+            GetLong(el, "id"), GetNullableLong(el, "thread_id"), GetString(el, "content") ?? "",
+            GetNullableLong(el, "user_id"), GetDate(el, "created_on")));
+    }
+
+    public async Task<IReadOnlyList<PaymoFile>> GetFilesAsync(string apiKey, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "files", ct);
+        return Parse(root, "files", el => new PaymoFile(
+            GetLong(el, "id"), GetString(el, "original_filename") ?? GetString(el, "name") ?? $"file-{GetLong(el, "id")}",
+            GetNullableLong(el, "project_id"), GetNullableLong(el, "task_id"),
+            GetNullableLong(el, "discussion_id"), GetNullableLong(el, "comment_id"),
+            (long)GetInt(el, "size"), GetString(el, "mime")));
+    }
+
+    public async Task<(byte[] Bytes, string ContentType)?> GetFileBytesAsync(string apiKey, long paymoFileId, CancellationToken ct = default)
+    {
+        try
+        {
+            using var res = await SendAsync(apiKey, $"files/{paymoFileId}/download", ct);
+            if (!res.IsSuccessStatusCode) return null;
+            var bytes = await res.Content.ReadAsByteArrayAsync(ct);
+            var contentType = res.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
+            return (bytes, contentType);
+        }
+        catch (Exception ex) { logger.LogWarning(ex, "Paymo file {Id} download failed", paymoFileId); return null; }
     }
 
     // --- where-clause builder (URL-encoded value; optional incremental filter) ---
