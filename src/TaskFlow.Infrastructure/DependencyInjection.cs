@@ -65,7 +65,8 @@ public static class DependencyInjection
             services.AddScoped<IPaymoClient, Integration.Paymo.PaymoSandboxClient>();
         else
         {
-            services.AddHttpClient<Integration.Paymo.PaymoHttpClient>();
+            // Generous timeout: Paymo never paginates, so a busy project can return a large body.
+            services.AddHttpClient<Integration.Paymo.PaymoHttpClient>(c => c.Timeout = TimeSpan.FromSeconds(120));
             services.AddScoped<IPaymoClient>(sp => sp.GetRequiredService<Integration.Paymo.PaymoHttpClient>());
         }
         services.AddScoped<IMigrationService, Integration.Paymo.MigrationService>();
