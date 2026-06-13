@@ -1,7 +1,7 @@
 (async function () {
   await I18N.load();
   if (!Auth.requireAuth()) return;
-  await UI.mountNavbar('dashboard');
+  await UI.mountNavbar('home');
 
   document.getElementById('userName').textContent = API.currentUser()?.fullName ?? '';
 
@@ -11,26 +11,61 @@
   const status = document.getElementById('timerStatus');
 
   let projects = [];
-  try { projects = (await API.get('/projects?pageSize=100')).items; } catch {}
 
-  // Projects list
-  const list = document.getElementById('projectList');
-  list.innerHTML = projects.length
-    ? projects.map(p => `<div class="d-flex justify-content-between align-items-center py-1 border-bottom">
-        <span>${UI.esc(p.name)}</span>
-        <a class="btn btn-sm btn-outline-primary" href="/board.html?projectId=${p.id}" data-i18n="dash.openBoard">${I18N.t('dash.openBoard')}</a></div>`).join('')
-    : `<div class="text-muted" data-i18n="dash.noProjects">${I18N.t('dash.noProjects')}</div>`;
+  function renderProjects() {
+    const list = document.getElementById('projectList');
+    list.innerHTML = projects.length
+      ? projects.map(p => `<div class="d-flex justify-content-between align-items-center py-1 border-bottom">
+          <span>${UI.esc(p.name)}${p.code ? ` <span class="text-muted small">(${UI.esc(p.code)})</span>` : ''}</span>
+          <a class="btn btn-sm btn-outline-primary" href="/board.html?projectId=${p.id}">${I18N.t('dash.openBoard')}</a></div>`).join('')
+      : `<div class="text-muted">${I18N.t('dash.noProjects')}</div>`;
+    projectSelect.innerHTML = projects.map(p => `<option value="${p.id}">${UI.esc(p.name)}</option>`).join('');
+  }
 
-  projectSelect.innerHTML = projects.map(p => `<option value="${p.id}">${UI.esc(p.name)}</option>`).join('');
+  async function loadProjects() {
+    try { projects = (await API.get('/projects?pageSize=100')).items; } catch { projects = []; }
+    renderProjects();
+  }
+  await loadProjects();
 
-  // Timer
+  // --- New project form ---
+  const form = document.getElementById('newProjectForm');
+  const errBox = document.getElementById('newProjectError');
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    errBox.innerHTML = '';
+    const due = document.getElementById('np_due').value;
+    const body = {
+      name: document.getElementById('np_name').value.trim(),
+      code: document.getElementById('np_code').value.trim() || null,
+      description: document.getElementById('np_desc').value.trim() || null,
+      categoryId: null,
+      clientId: null,
+      startDate: null,
+      dueDate: due ? `${due}T00:00:00Z` : null,
+      isBillable: document.getElementById('np_billable').checked,
+      budgetAmount: null,
+      budgetHours: null,
+      color: null
+    };
+    try {
+      await API.post('/projects', body);
+      form.reset();
+      bootstrap.Modal.getInstance(document.getElementById('newProjectModal')).hide();
+      await loadProjects();
+    } catch (ex) {
+      errBox.innerHTML = `<div class="alert alert-danger py-1 mb-2">${ex.problem?.title || I18N.t('common.error')}</div>`;
+    }
+  };
+
+  // --- Timer ---
   async function refreshTimer() {
     const running = await API.get('/time/running');
     if (running) {
       status.innerHTML = `<span class="timer-running">● ${I18N.t('dash.running')}</span>`;
       startBtn.classList.add('d-none'); stopBtn.classList.remove('d-none');
     } else {
-      status.setAttribute('data-i18n', 'dash.noTimer'); status.textContent = I18N.t('dash.noTimer');
+      status.textContent = I18N.t('dash.noTimer');
       startBtn.classList.remove('d-none'); stopBtn.classList.add('d-none');
     }
   }
@@ -43,7 +78,7 @@
   stopBtn.onclick = async () => { await API.post('/time/stop'); refreshTimer(); };
   await refreshTimer();
 
-  // Activity feed
+  // --- Activity feed ---
   try {
     const feed = await API.get('/activity?take=20');
     const al = document.getElementById('activityList');

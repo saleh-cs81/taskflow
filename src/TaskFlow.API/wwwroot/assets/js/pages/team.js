@@ -1,7 +1,7 @@
 (async function () {
   await I18N.load();
   if (!Auth.requireAuth()) return;
-  await UI.mountNavbar('team');
+  await UI.mountNavbar('users');
 
   let roles = [];
 

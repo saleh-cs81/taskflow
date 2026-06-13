@@ -36,8 +36,10 @@
 
 # Local secrets / runtime data
 **/appsettings.*.local.json
+**/appsettings.Production.json
 **/App_Data/
 *.env
+deploy/publish/
 
 # OS / logs
 Thumbs.db

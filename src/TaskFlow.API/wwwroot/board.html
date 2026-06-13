@@ -18,6 +18,55 @@
     <div class="board" id="board"></div>
   </div>
 
+  <!-- Task modal (used both for "add task" and to edit a clicked card) -->
+  <div class="modal fade" id="taskModal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <form id="taskForm">
+          <div class="modal-header">
+            <h5 class="modal-title" id="taskModalTitle" data-i18n="task.create"></h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div id="taskError"></div>
+            <input type="hidden" id="tf_listId">
+            <div class="mb-3">
+              <label class="form-label" data-i18n="task.title"></label>
+              <input type="text" class="form-control" id="tf_title" required maxlength="300">
+            </div>
+            <div class="mb-3">
+              <label class="form-label" data-i18n="task.description"></label>
+              <textarea class="form-control" id="tf_desc" rows="2" maxlength="2000"></textarea>
+            </div>
+            <div class="row g-2">
+              <div class="col-6">
+                <label class="form-label" data-i18n="task.priority"></label>
+                <select class="form-select" id="tf_priority">
+                  <option value="0" data-i18n="task.prio.low"></option>
+                  <option value="1" selected data-i18n="task.prio.normal"></option>
+                  <option value="2" data-i18n="task.prio.high"></option>
+                  <option value="3" data-i18n="task.prio.urgent"></option>
+                </select>
+              </div>
+              <div class="col-6">
+                <label class="form-label" data-i18n="task.dueDate"></label>
+                <input type="date" class="form-control" id="tf_due">
+              </div>
+            </div>
+            <div class="mb-2 mt-3">
+              <label class="form-label" data-i18n="task.assignee"></label>
+              <select class="form-select" id="tf_assignee"></select>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="proj.cancel"></button>
+            <button type="submit" class="btn btn-primary" data-i18n="task.add"></button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>

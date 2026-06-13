@@ -54,6 +54,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<Discussion> Discussions => Set<Discussion>();
     public DbSet<DiscussionPost> DiscussionPosts => Set<DiscussionPost>();
 
+    public DbSet<Invoice> Invoices => Set<Invoice>();
+    public DbSet<InvoiceLineItem> InvoiceLineItems => Set<InvoiceLineItem>();
+    public DbSet<Estimate> Estimates => Set<Estimate>();
+    public DbSet<EstimateLineItem> EstimateLineItems => Set<EstimateLineItem>();
+    public DbSet<Expense> Expenses => Set<Expense>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -158,6 +164,61 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             b.Property(x => x.Body).HasMaxLength(4000).IsRequired();
             b.HasOne(x => x.Discussion).WithMany(d => d.Posts)
                 .HasForeignKey(x => x.DiscussionId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+
+        // Accounting: invoices, estimates, expenses.
+        modelBuilder.Entity<Invoice>(b =>
+        {
+            b.ToTable("Invoices");
+            b.Property(x => x.Number).HasMaxLength(40).IsRequired();
+            b.Property(x => x.Currency).HasMaxLength(3);
+            b.Property(x => x.Notes).HasMaxLength(2000);
+            foreach (var p in new[] { "Subtotal", "TaxRate", "TaxAmount", "Total" })
+                b.Property(p).HasPrecision(18, 2);
+            b.HasOne(x => x.Client).WithMany().HasForeignKey(x => x.ClientId).OnDelete(DeleteBehavior.SetNull);
+            b.HasIndex(x => new { x.TenantId, x.Number });
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+        modelBuilder.Entity<InvoiceLineItem>(b =>
+        {
+            b.ToTable("InvoiceLineItems");
+            b.Property(x => x.Description).HasMaxLength(500).IsRequired();
+            foreach (var p in new[] { "Quantity", "UnitPrice", "LineTotal" })
+                b.Property(p).HasPrecision(18, 2);
+            b.HasOne(x => x.Invoice).WithMany(i => i.Items).HasForeignKey(x => x.InvoiceId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+        modelBuilder.Entity<Estimate>(b =>
+        {
+            b.ToTable("Estimates");
+            b.Property(x => x.Number).HasMaxLength(40).IsRequired();
+            b.Property(x => x.Currency).HasMaxLength(3);
+            b.Property(x => x.Notes).HasMaxLength(2000);
+            foreach (var p in new[] { "Subtotal", "TaxRate", "TaxAmount", "Total" })
+                b.Property(p).HasPrecision(18, 2);
+            b.HasOne(x => x.Client).WithMany().HasForeignKey(x => x.ClientId).OnDelete(DeleteBehavior.SetNull);
+            b.HasIndex(x => new { x.TenantId, x.Number });
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+        modelBuilder.Entity<EstimateLineItem>(b =>
+        {
+            b.ToTable("EstimateLineItems");
+            b.Property(x => x.Description).HasMaxLength(500).IsRequired();
+            foreach (var p in new[] { "Quantity", "UnitPrice", "LineTotal" })
+                b.Property(p).HasPrecision(18, 2);
+            b.HasOne(x => x.Estimate).WithMany(i => i.Items).HasForeignKey(x => x.EstimateId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+        modelBuilder.Entity<Expense>(b =>
+        {
+            b.ToTable("Expenses");
+            b.Property(x => x.Category).HasMaxLength(100).IsRequired();
+            b.Property(x => x.Description).HasMaxLength(500);
+            b.Property(x => x.Currency).HasMaxLength(3);
+            b.Property(x => x.Amount).HasPrecision(18, 2);
+            b.HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.SetNull);
+            b.HasOne(x => x.Client).WithMany().HasForeignKey(x => x.ClientId).OnDelete(DeleteBehavior.SetNull);
             b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
         });
     }

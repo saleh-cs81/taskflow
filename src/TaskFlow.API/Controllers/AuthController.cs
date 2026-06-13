@@ -14,7 +14,8 @@ public class AuthController(
     IValidator<LoginRequest> loginValidator,
     IValidator<RefreshRequest> refreshValidator,
     IValidator<ForgotPasswordRequest> forgotValidator,
-    IValidator<ResetPasswordRequest> resetValidator) : ControllerBase
+    IValidator<ResetPasswordRequest> resetValidator,
+    IValidator<ChangePasswordRequest> changePasswordValidator) : ControllerBase
 {
     private string? Ip => HttpContext.Connection.RemoteIpAddress?.ToString();
 
@@ -68,6 +69,15 @@ public class AuthController(
     {
         await resetValidator.ValidateAndThrowAppAsync(request, ct);
         await auth.ResetPasswordAsync(request, ct);
+        return NoContent();
+    }
+
+    [Authorize]
+    [HttpPost("change-password")]
+    public async Task<IActionResult> ChangePassword(ChangePasswordRequest request, CancellationToken ct)
+    {
+        await changePasswordValidator.ValidateAndThrowAppAsync(request, ct);
+        await auth.ChangePasswordAsync(request, ct);
         return NoContent();
     }
 }

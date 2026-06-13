@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using TaskFlow.Application.Common.Interfaces;
+using TaskFlow.Application.Features.Accounting;
 using TaskFlow.Application.Features.Auth;
 using TaskFlow.Application.Features.Billing;
 using TaskFlow.Application.Features.Files;
@@ -80,6 +81,10 @@ public static class DependencyInjection
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<IDiscussionService, DiscussionService>();
         services.AddHostedService<DeadlineReminderWorker>();
+
+        services.AddScoped<IInvoiceService, InvoiceService>();
+        services.AddScoped<IEstimateService, EstimateService>();
+        services.AddScoped<IExpenseService, ExpenseService>();
 
         services.AddSingleton<IFileStorage, LocalFileStorage>();
         services.AddSingleton<IEmailSender, LoggingEmailSender>();

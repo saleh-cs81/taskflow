@@ -13,7 +13,8 @@ public class AuthService(
     IPasswordHasher hasher,
     IJwtService jwt,
     ITenantContext tenant,
-    IDateTime clock) : IAuthService
+    IDateTime clock,
+    ICurrentUser currentUser) : IAuthService
 {
     public async Task<AuthResponse> RegisterAsync(RegisterRequest req, string? ip, CancellationToken ct = default)
     {
@@ -145,6 +146,25 @@ public class AuthService(
         user.PasswordHash = hasher.Hash(req.NewPassword);
         user.PasswordResetTokenHash = null;
         user.PasswordResetExpiresUtc = null;
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task ChangePasswordAsync(ChangePasswordRequest req, CancellationToken ct = default)
+    {
+        var uid = currentUser.UserId ?? throw new UnauthorizedAppException("error.unauthorized");
+        var user = await db.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == uid, ct)
+            ?? throw new UnauthorizedAppException("error.unauthorized");
+
+        if (!hasher.Verify(req.CurrentPassword, user.PasswordHash))
+            throw new ValidationAppException("auth.invalid_credentials");
+
+        user.PasswordHash = hasher.Hash(req.NewPassword);
+
+        // Revoke all active refresh tokens so other sessions are signed out.
+        var tokens = await db.RefreshTokens.IgnoreQueryFilters()
+            .Where(t => t.UserId == uid && t.RevokedUtc == null).ToListAsync(ct);
+        foreach (var t in tokens) t.RevokedUtc = clock.UtcNow;
+
         await db.SaveChangesAsync(ct);
     }
 

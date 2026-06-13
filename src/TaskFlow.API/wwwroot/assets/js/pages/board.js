@@ -20,6 +20,14 @@
 
   function priorityDot(p) { return `<span class="priority priority-${p}"></span>`; }
 
+  // Load users for the assignee dropdown once.
+  let users = [];
+  try { users = await API.get('/users'); } catch {}
+  const assigneeSelect = document.getElementById('tf_assignee');
+  assigneeSelect.innerHTML =
+    `<option value="">—</option>` +
+    users.map(u => `<option value="${u.id}">${UI.esc(u.fullName)} (${UI.esc(u.email)})</option>`).join('');
+
   async function render() {
     document.getElementById('projectName').textContent = projects.find(p => p.id === projectId)?.name ?? '';
     const board = await API.get(`/projects/${projectId}/board`);
@@ -36,12 +44,9 @@
       </div>`).join('');
 
     boardEl.querySelectorAll('.task-list-dropzone').forEach(zone => {
-      Sortable.create(zone, {
-        group: 'board', animation: 150, ghostClass: 'sortable-ghost',
-        onEnd: onDrop
-      });
+      Sortable.create(zone, { group: 'board', animation: 150, ghostClass: 'sortable-ghost', onEnd: onDrop });
     });
-    boardEl.querySelectorAll('.add-task').forEach(b => b.onclick = () => addTask(b.dataset.listId, parseInt(b.dataset.statusIdx, 10)));
+    boardEl.querySelectorAll('.add-task').forEach(b => b.onclick = () => openTaskModal(b.dataset.listId));
   }
 
   function taskCard(t) {
@@ -55,24 +60,43 @@
     const zone = evt.to;
     const listId = parseInt(zone.dataset.listId, 10);
     const statusIdx = parseInt(zone.closest('.board-column').dataset.statusIdx, 10);
-
-    // Position = midpoint between neighbors (×1000 spacing, fractional OK).
-    const cards = [...zone.querySelectorAll('.task-card')];
     const pos = (evt.newIndex + 1) * 1000;
-
     try {
       await API.patch(`/tasks/${taskId}/move`, { taskListId: listId, position: pos, status: STATUS_BY_INDEX[statusIdx] });
     } catch { render(); }
   }
 
-  async function addTask(listId, statusIdx) {
-    const title = prompt(I18N.t('board.taskTitle'));
-    if (!title) return;
-    await API.post('/tasks', { projectId, taskListId: parseInt(listId, 10), title, priority: 1 });
-    render();
+  // --- Task creation modal ---
+  const taskModal = new bootstrap.Modal(document.getElementById('taskModal'));
+  function openTaskModal(listId) {
+    document.getElementById('taskForm').reset();
+    document.getElementById('tf_listId').value = listId;
+    document.getElementById('taskError').innerHTML = '';
+    taskModal.show();
   }
+  document.getElementById('taskForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const listId = parseInt(document.getElementById('tf_listId').value, 10);
+    const due = document.getElementById('tf_due').value;
+    const assigneeId = document.getElementById('tf_assignee').value;
+    const body = {
+      projectId,
+      taskListId: listId,
+      parentTaskId: null,
+      milestoneId: null,
+      title: document.getElementById('tf_title').value.trim(),
+      description: document.getElementById('tf_desc').value.trim() || null,
+      priority: parseInt(document.getElementById('tf_priority').value, 10),
+      assigneeId: assigneeId ? parseInt(assigneeId, 10) : null,
+      startDate: null,
+      dueDate: due ? `${due}T00:00:00Z` : null,
+      estimateHours: null,
+      isBillable: false
+    };
+    try { await API.post('/tasks', body); taskModal.hide(); render(); }
+    catch (ex) { document.getElementById('taskError').innerHTML = `<div class="alert alert-danger py-1">${ex.problem?.title || I18N.t('common.error')}</div>`; }
+  };
 
-  // Live updates: re-render when another user changes this project's board.
   let conn;
   async function subscribe() {
     conn = await Realtime.connect('board');

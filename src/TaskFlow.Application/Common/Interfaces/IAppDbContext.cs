@@ -52,5 +52,11 @@ public interface IAppDbContext
     DbSet<Discussion> Discussions { get; }
     DbSet<DiscussionPost> DiscussionPosts { get; }
 
+    DbSet<Invoice> Invoices { get; }
+    DbSet<InvoiceLineItem> InvoiceLineItems { get; }
+    DbSet<Estimate> Estimates { get; }
+    DbSet<EstimateLineItem> EstimateLineItems { get; }
+    DbSet<Expense> Expenses { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

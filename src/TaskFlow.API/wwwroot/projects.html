@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TaskFlow</title>
+  <link id="bootstrap-css" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/assets/css/app.css">
+</head>
+<body>
+  <div id="navbar"></div>
+  <div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h3 class="mb-0" data-i18n="proj.title"></h3>
+      <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#projModal" data-i18n="dash.newProject"></button>
+    </div>
+    <div class="row g-3" id="projGrid"></div>
+  </div>
+
+  <div class="modal fade" id="projModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+    <form id="projForm">
+      <div class="modal-header"><h5 class="modal-title" data-i18n="dash.newProject"></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div id="projErr"></div>
+        <div class="mb-3"><label class="form-label" data-i18n="proj.name"></label>
+          <input type="text" class="form-control" id="p_name" required maxlength="150"></div>
+        <div class="row g-2">
+          <div class="col-6"><label class="form-label" data-i18n="proj.code"></label>
+            <input type="text" class="form-control" id="p_code" maxlength="30"></div>
+          <div class="col-6"><label class="form-label" data-i18n="proj.client"></label>
+            <select class="form-select" id="p_client"></select></div>
+        </div>
+        <div class="mb-3 mt-3"><label class="form-label" data-i18n="proj.dueDate"></label>
+          <input type="date" class="form-control" id="p_due"></div>
+        <div class="form-check"><input class="form-check-input" type="checkbox" id="p_billable" checked>
+          <label class="form-check-label" for="p_billable" data-i18n="proj.billable"></label></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="proj.cancel"></button>
+        <button type="submit" class="btn btn-primary" data-i18n="proj.create"></button>
+      </div>
+    </form>
+  </div></div></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/assets/js/core/i18n.js"></script>
+  <script src="/assets/js/core/api.js"></script>
+  <script src="/assets/js/core/auth.js"></script>
+  <script src="/assets/js/core/realtime.js"></script>
+  <script src="/assets/js/core/ui.js"></script>
+  <script src="/assets/js/pages/projects.js"></script>
+</body>
+</html>
