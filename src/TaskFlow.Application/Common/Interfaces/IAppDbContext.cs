@@ -61,5 +61,7 @@ public interface IAppDbContext
     DbSet<EstimateLineItem> EstimateLineItems { get; }
     DbSet<Expense> Expenses { get; }
 
+    DbSet<Booking> Bookings { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

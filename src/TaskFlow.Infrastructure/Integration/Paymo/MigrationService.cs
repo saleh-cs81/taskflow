@@ -114,6 +114,11 @@ public class MigrationService(
             try { foreach (var s in await paymo.GetProjectStatusesAsync(apiKey, ct)) statusMap[s.Id] = s.Name; }
             catch (Exception ex) { await RecordError(job, "ProjectStatus", 0, ex, "statuses", ct); }
 
+            // 2b) Workflow statuses (reference vocabulary: paymo task status_id -> board column).
+            var wfStatuses = new Dictionary<long, PaymoWorkflowStatus>();
+            try { foreach (var ws in await paymo.GetWorkflowStatusesAsync(apiKey, ct)) wfStatuses[ws.Id] = ws; }
+            catch (Exception ex) { await RecordError(job, "WorkflowStatus", 0, ex, "workflowstatuses", ct); }
+
             // 3) Clients, then their contacts.
             var clientMap = new Dictionary<long, long>();
             foreach (var c in await paymo.GetClientsAsync(apiKey, since, ct))
@@ -138,6 +143,7 @@ public class MigrationService(
             // 4) Projects (outer loop drives the progress bar). Accumulate cross-project
             // maps so comments/files (fetched globally) can be anchored afterwards.
             var ctx = new ImportContext(userMap);
+            foreach (var kv in wfStatuses) ctx.WorkflowStatus[kv.Key] = kv.Value;
             var projects = await paymo.GetProjectsAsync(apiKey, since, ct);
             job.ProjectsTotal = projects.Count;
             await db.SaveChangesAsync(ct);
@@ -167,6 +173,10 @@ public class MigrationService(
             await ImportFinancialsAsync(job, apiKey, clientMap, ctx, since, ct);
             await db.SaveChangesAsync(ct);
 
+            // 8) Bookings (scheduling): resolve user_task_id via users_tasks, anchor to imported project/task/user.
+            await ImportBookingsAsync(job, apiKey, ctx, ct);
+            await db.SaveChangesAsync(ct);
+
             job.TotalRecords = job.ProcessedRecords + job.ErrorCount;
             job.Status = job.ErrorCount > 0 ? MigrationJobStatus.CompletedWithErrors : MigrationJobStatus.Completed;
             job.Message = $"Imported {job.ProcessedRecords} records across {job.ProjectsDone} projects ({job.ErrorCount} errors).";
@@ -193,6 +203,7 @@ public class MigrationService(
         public Dictionary<long, long> ThreadToTask { get; } = new();        // paymo thread_id -> local task id
         public Dictionary<long, long> ThreadToDiscussion { get; } = new();  // paymo thread_id -> local discussion id
         public Dictionary<long, long> CommentByPaymo { get; } = new();      // paymo comment id -> local Comment id
+        public Dictionary<long, PaymoWorkflowStatus> WorkflowStatus { get; } = new(); // paymo status_id -> workflow status
     }
 
     private async Task ImportProjectChildren(MigrationJob job, string apiKey, long paymoProjectId, long localProjectId,
@@ -231,7 +242,7 @@ public class MigrationService(
                 long? localMilestone = t.TaskListId is { } lid2 && listMilestone.TryGetValue(lid2, out var pm)
                     && milestoneMap.TryGetValue(pm, out var lm) ? lm : null;
                 var assignees = t.AssigneeUserIds.Where(userMap.ContainsKey).Select(a => userMap[a]).ToList();
-                var localTaskId = await UpsertTaskAsync(t, localProjectId, localList, localMilestone, assignees, ct);
+                var localTaskId = await UpsertTaskAsync(t, localProjectId, localList, localMilestone, assignees, ctx.WorkflowStatus, ct);
                 ctx.TaskByPaymo[t.Id] = localTaskId;
                 if (t.ThreadId is { } th) ctx.ThreadToTask[th] = localTaskId;
                 job.ProcessedRecords++;
@@ -400,6 +411,55 @@ public class MigrationService(
         catch (Exception ex) { await RecordError(job, "Estimate", 0, ex, "estimates", ct); }
 
         job.Message = $"Imported financials… {job.ProcessedRecords} records";
+        await db.SaveChangesAsync(ct);
+    }
+
+    // Bookings reference a user_task_id (a users_tasks assignment row), not direct user/task ids.
+    // Build that map once per run (one call per user), then anchor each booking to imported entities.
+    private async Task ImportBookingsAsync(MigrationJob job, string apiKey, ImportContext ctx, CancellationToken ct)
+    {
+        // user_task_id -> (paymo user id, paymo task id)
+        var userTaskMap = new Dictionary<long, (long User, long Task)>();
+        foreach (var paymoUserId in ctx.UserMap.Keys)
+        {
+            try
+            {
+                foreach (var ut in await paymo.GetUserTasksAsync(apiKey, paymoUserId, ct))
+                    userTaskMap[ut.Id] = (ut.UserId, ut.TaskId);
+            }
+            catch (Exception ex) { await RecordError(job, "UserTask", paymoUserId, ex, "userstasks", ct); }
+        }
+
+        foreach (var (paymoProjectId, localProjectId) in ctx.ProjectByPaymo)
+        {
+            IReadOnlyList<PaymoBooking> bookings;
+            try { bookings = await paymo.GetBookingsAsync(apiKey, paymoProjectId, ct); }
+            catch (Exception ex) { await RecordError(job, "Booking", paymoProjectId, ex, "bookings", ct); continue; }
+
+            foreach (var bk in bookings)
+            {
+                try
+                {
+                    // Prefer direct ids if the response carried them; else resolve via the assignment map.
+                    long? paymoUser = bk.UserId;
+                    long? paymoTask = bk.TaskId;
+                    if ((paymoUser is null || paymoTask is null) && userTaskMap.TryGetValue(bk.UserTaskId, out var ut))
+                    {
+                        paymoUser ??= ut.User;
+                        paymoTask ??= ut.Task;
+                    }
+
+                    if (paymoUser is not { } pu || !ctx.UserMap.TryGetValue(pu, out var localUser))
+                        continue;   // a booking with no resolvable user isn't meaningful — skip
+                    long? localTask = paymoTask is { } pt && ctx.TaskByPaymo.TryGetValue(pt, out var lt) ? lt : null;
+
+                    await UpsertBookingAsync(bk, localUser, localProjectId, localTask, ct);
+                    job.ProcessedRecords++;
+                }
+                catch (Exception ex) { await RecordError(job, "Booking", bk.Id, ex, bk, ct); }
+            }
+        }
+        job.Message = $"Imported bookings… {job.ProcessedRecords} records";
         await db.SaveChangesAsync(ct);
     }
 
@@ -663,10 +723,10 @@ public class MigrationService(
     }
 
     private async Task<long> UpsertTaskAsync(PaymoTask t, long localProjectId, long? localListId, long? localMilestoneId,
-        IReadOnlyList<long> assigneeIds, CancellationToken ct)
+        IReadOnlyList<long> assigneeIds, IReadOnlyDictionary<long, PaymoWorkflowStatus> wfStatus, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(t.Name)) throw new InvalidOperationException("Task title is required.");
-        var status = t.Complete ? WorkStatus.Done : WorkStatus.Todo;
+        var status = MapWorkStatus(t, wfStatus);
         var priority = MapPriority(t.Priority);
         var primary = assigneeIds.Count > 0 ? assigneeIds[0] : (long?)null;
         var pos = t.Seq > 0 ? t.Seq * 1000.0 : 1000;
@@ -858,6 +918,50 @@ public class MigrationService(
         return EstimateStatus.Draft;
     }
 
+    private async Task UpsertBookingAsync(PaymoBooking bk, long localUserId, long localProjectId, long? localTaskId, CancellationToken ct)
+    {
+        var start = bk.StartDate ?? clock.UtcNow;
+        var end = bk.EndDate ?? start;
+        var existing = await FindMappingAsync("Booking", bk.Id, ct);
+        if (existing is not null)
+        {
+            var row = await db.Bookings.FirstOrDefaultAsync(x => x.Id == existing.LocalId, ct);
+            if (row is not null)
+            {
+                row.UserId = localUserId; row.ProjectId = localProjectId; row.TaskId = localTaskId;
+                row.StartDate = start; row.EndDate = end; row.HoursPerDay = bk.HoursPerDay; row.Description = bk.Description;
+            }
+            existing.LastSyncedUtc = clock.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+        var created = new Booking
+        {
+            UserId = localUserId, ProjectId = localProjectId, TaskId = localTaskId,
+            StartDate = start, EndDate = end, HoursPerDay = bk.HoursPerDay, Description = bk.Description
+        };
+        db.Bookings.Add(created);
+        await db.SaveChangesAsync(ct);
+        await AddMappingAsync("Booking", bk.Id, created.Id, ct);
+    }
+
+    // Map a Paymo task to a WorkStatus using its workflow status (status_id) when known,
+    // falling back to the boolean 'complete' flag. action = Paymo's backlog/complete marker.
+    private static WorkStatus MapWorkStatus(PaymoTask t, IReadOnlyDictionary<long, PaymoWorkflowStatus> wfStatus)
+    {
+        if (t.StatusId is { } sid && wfStatus.TryGetValue(sid, out var ws))
+        {
+            var action = (ws.Action ?? "").ToLowerInvariant();
+            var name = (ws.Name ?? "").ToLowerInvariant();
+            if (action.Contains("complete") || name.Contains("complete") || name.Contains("done") || name.Contains("closed")) return WorkStatus.Done;
+            if (name.Contains("block")) return WorkStatus.Blocked;
+            if (name.Contains("review") || name.Contains("qa") || name.Contains("test") || name.Contains("approval")) return WorkStatus.InReview;
+            if (name.Contains("progress") || name.Contains("doing") || name.Contains("active") || name.Contains("working")) return WorkStatus.InProgress;
+            if (action.Contains("backlog") || name.Contains("backlog") || name.Contains("todo") || name.Contains("to do") || name.Contains("open") || name.Contains("new")) return WorkStatus.Todo;
+        }
+        return t.Complete ? WorkStatus.Done : WorkStatus.Todo;   // fallback
+    }
+
     // Paymo priority is 100/75/50/25 (higher = more important).
     private static TaskPriority MapPriority(int p) => p switch
     {
@@ -877,6 +981,7 @@ public class MigrationService(
         long[] Ids(string type) => maps.Where(m => m.EntityType == type).Select(m => m.LocalId).Distinct().ToArray();
 
         // Child → parent order; ExecuteDelete is a hard delete (bypasses soft-delete interceptor).
+        var bookingIds = Ids("Booking");
         var fileIds = Ids("File");
         var entryIds = Ids("TimeEntry");
         var subtaskIds = Ids("Subtask");      // -> local ChecklistItems
@@ -894,6 +999,9 @@ public class MigrationService(
         var contactIds = Ids("ClientContact");
         var clientIds = Ids("Client");
         var userIds = Ids("User");
+
+        // Bookings first (Restrict FKs to user/project/task).
+        if (bookingIds.Length > 0) await db.Bookings.IgnoreQueryFilters().Where(x => bookingIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
 
         // Financials (payments → invoice line items → invoices; estimate line items → estimates; expenses).
         if (paymentIds.Length > 0) await db.InvoicePayments.IgnoreQueryFilters().Where(x => paymentIds.Contains(x.Id)).ExecuteDeleteAsync(ct);

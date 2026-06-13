@@ -49,11 +49,34 @@ public class PaymoSandboxClient : IPaymoClient
 
     private static readonly PaymoTask[] Tasks =
     [
-        new(3001, 1001, 2001, "Design landing page", "Hero + features", false, DateTime.UtcNow.AddDays(3), DateTime.UtcNow.AddDays(-1), null, 75, 1, "MKT-1", 30001, [5001]),
-        new(3002, 1001, 2002, "Set up analytics", null, false, null, null, null, 50, 2, "MKT-2", 30002, [5002, 5001]),
-        new(3003, 1001, 2002, "Write copy", "Marketing copy", true, null, null, DateTime.UtcNow.AddDays(-2), 25, 3, "MKT-3", 30003, [5001]),
-        new(3004, 1002, 2003, "Auth screens", "Login + signup", false, null, null, null, 100, 1, "APP-1", 30004, [5002]),
-        new(3005, 1002, 2003, "Push notifications", null, false, null, null, null, 50, 2, "APP-2", null, []),
+        new(3001, 1001, 2001, "Design landing page", "Hero + features", false, DateTime.UtcNow.AddDays(3), DateTime.UtcNow.AddDays(-1), null, 75, 1, "MKT-1", 30001, [5001], 70002),
+        new(3002, 1001, 2002, "Set up analytics", null, false, null, null, null, 50, 2, "MKT-2", 30002, [5002, 5001], 70001),
+        new(3003, 1001, 2002, "Write copy", "Marketing copy", true, null, null, DateTime.UtcNow.AddDays(-2), 25, 3, "MKT-3", 30003, [5001], 70004),
+        new(3004, 1002, 2003, "Auth screens", "Login + signup", false, null, null, null, 100, 1, "APP-1", 30004, [5002], 70003),
+        new(3005, 1002, 2003, "Push notifications", null, false, null, null, null, 50, 2, "APP-2", null, [], 70001),
+    ];
+
+    private static readonly PaymoWorkflowStatus[] WorkflowStatuses =
+    [
+        new(70001, "Backlog", 60001, "backlog", 1),
+        new(70002, "In Progress", 60001, null, 2),
+        new(70003, "In Review", 60001, null, 3),
+        new(70004, "Complete", 60001, "complete", 4),
+    ];
+
+    // users_tasks assignment rows; Id is what a booking references as user_task_id.
+    private static readonly PaymoUserTask[] UserTasks =
+    [
+        new(80001, 5001, 3001),
+        new(80002, 5002, 3004),
+        new(80003, 5001, 3003),
+    ];
+
+    // Bookings: UserId/TaskId left null to exercise resolution via user_task_id; ProjectId set for filtering.
+    private static readonly PaymoBooking[] Bookings =
+    [
+        new(90001, 80001, 1001, null, null, DateTime.UtcNow.AddDays(1), DateTime.UtcNow.AddDays(5), 4, "Design sprint"),
+        new(90002, 80002, 1002, null, null, DateTime.UtcNow.AddDays(2), DateTime.UtcNow.AddDays(10), 6, "Auth build"),
     ];
 
     private static readonly PaymoDiscussion[] Discussions =
@@ -168,4 +191,13 @@ public class PaymoSandboxClient : IPaymoClient
 
     public Task<IReadOnlyList<PaymoEstimate>> GetEstimatesAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<PaymoEstimate>>(Estimates);
+
+    public Task<IReadOnlyList<PaymoWorkflowStatus>> GetWorkflowStatusesAsync(string apiKey, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoWorkflowStatus>>(WorkflowStatuses);
+
+    public Task<IReadOnlyList<PaymoUserTask>> GetUserTasksAsync(string apiKey, long paymoUserId, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoUserTask>>(UserTasks.Where(u => u.UserId == paymoUserId).ToList());
+
+    public Task<IReadOnlyList<PaymoBooking>> GetBookingsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoBooking>>(Bookings.Where(b => b.ProjectId == paymoProjectId).ToList());
 }

@@ -91,7 +91,7 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
             GetString(el, "name") ?? "", GetString(el, "description"), GetBool(el, "complete"),
             GetDate(el, "due_date"), GetDate(el, "start_date"), GetDate(el, "completed_on"),
             GetInt(el, "priority"), GetInt(el, "seq"), GetString(el, "code"),
-            GetNullableLong(el, "thread_id"), AllUserIds(el, "users")));
+            GetNullableLong(el, "thread_id"), AllUserIds(el, "users"), GetNullableLong(el, "status_id")));
     }
 
     public async Task<IReadOnlyList<PaymoSubtask>> GetSubtasksAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
@@ -230,6 +230,30 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
             GetNullableLong(el, "client_id"), GetString(el, "status"), GetString(el, "currency"),
             GetDate(el, "date"), GetDate(el, "due_date") ?? GetDate(el, "expiry_date"),
             GetDecimal(el, "subtotal"), GetDecimal(el, "tax") + GetDecimal(el, "tax2"), GetDecimal(el, "total")));
+    }
+
+    public async Task<IReadOnlyList<PaymoWorkflowStatus>> GetWorkflowStatusesAsync(string apiKey, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "workflowstatuses", ct);
+        return Parse(root, "workflowstatuses", el => new PaymoWorkflowStatus(
+            GetLong(el, "id"), GetString(el, "name") ?? "", GetNullableLong(el, "workflow_id"),
+            GetString(el, "action"), GetInt(el, "seq")));
+    }
+
+    public async Task<IReadOnlyList<PaymoUserTask>> GetUserTasksAsync(string apiKey, long paymoUserId, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "userstasks" + WhereSuffix($"user_id={paymoUserId}", null), ct);
+        return Parse(root, "userstasks", el => new PaymoUserTask(
+            GetLong(el, "id"), GetLong(el, "user_id"), GetLong(el, "task_id")));
+    }
+
+    public async Task<IReadOnlyList<PaymoBooking>> GetBookingsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "bookings" + WhereSuffix($"project_id={paymoProjectId}", null), ct);
+        return Parse(root, "bookings", el => new PaymoBooking(
+            GetLong(el, "id"), GetLong(el, "user_task_id"),
+            GetNullableLong(el, "project_id"), GetNullableLong(el, "user_id"), GetNullableLong(el, "task_id"),
+            GetDate(el, "start_date"), GetDate(el, "end_date"), GetInt(el, "hours_per_day"), GetString(el, "description")));
     }
 
     // --- where-clause builder (URL-encoded value; optional incremental filter) ---

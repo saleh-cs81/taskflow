@@ -62,6 +62,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<Estimate> Estimates => Set<Estimate>();
     public DbSet<EstimateLineItem> EstimateLineItems => Set<EstimateLineItem>();
     public DbSet<Expense> Expenses => Set<Expense>();
+    public DbSet<Booking> Bookings => Set<Booking>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -252,6 +253,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             b.Property(x => x.Amount).HasPrecision(18, 2);
             b.HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.SetNull);
             b.HasOne(x => x.Client).WithMany().HasForeignKey(x => x.ClientId).OnDelete(DeleteBehavior.SetNull);
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+        modelBuilder.Entity<Booking>(b =>
+        {
+            b.ToTable("Bookings");
+            b.Property(x => x.Description).HasMaxLength(1000);
+            // Restrict on all FKs to avoid multiple-cascade-path conflicts; migration reset hard-deletes in order.
+            b.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne(x => x.Task).WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(x => new { x.TenantId, x.ProjectId });
             b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
         });
     }
