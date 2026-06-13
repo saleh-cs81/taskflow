@@ -153,17 +153,14 @@ public class PaymoSandboxClient : IPaymoClient
     public Task<IReadOnlyList<PaymoTaskList>> GetTaskListsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<PaymoTaskList>>(Lists.Where(l => l.ProjectId == paymoProjectId).ToList());
 
-    public Task<IReadOnlyList<PaymoMilestone>> GetMilestonesAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<PaymoMilestone>>(Milestones.Where(m => m.ProjectId == paymoProjectId).ToList());
+    public Task<IReadOnlyList<PaymoMilestone>> GetMilestonesAsync(string apiKey, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoMilestone>>(Milestones);
 
     public Task<IReadOnlyList<PaymoTask>> GetTasksAsync(string apiKey, long paymoProjectId, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<PaymoTask>>(Tasks.Where(t => t.ProjectId == paymoProjectId).ToList());
 
-    public Task<IReadOnlyList<PaymoSubtask>> GetSubtasksAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
-    {
-        var taskIds = Tasks.Where(t => t.ProjectId == paymoProjectId).Select(t => t.Id).ToHashSet();
-        return Task.FromResult<IReadOnlyList<PaymoSubtask>>(Subtasks.Where(s => taskIds.Contains(s.TaskId)).ToList());
-    }
+    public Task<IReadOnlyList<PaymoSubtask>> GetSubtasksAsync(string apiKey, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoSubtask>>(Subtasks);
 
     public Task<IReadOnlyList<PaymoTimeEntry>> GetTimeEntriesAsync(string apiKey, long paymoProjectId, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<PaymoTimeEntry>>(TimeEntries.Where(t => t.ProjectId == paymoProjectId).ToList());
@@ -171,11 +168,11 @@ public class PaymoSandboxClient : IPaymoClient
     public Task<IReadOnlyList<PaymoDiscussion>> GetDiscussionsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<PaymoDiscussion>>(Discussions.Where(d => d.ProjectId == paymoProjectId).ToList());
 
-    public Task<IReadOnlyList<PaymoComment>> GetCommentsAsync(string apiKey, CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<PaymoComment>>(Comments);
+    public Task<IReadOnlyList<PaymoComment>> GetCommentsAsync(string apiKey, long threadId, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoComment>>(Comments.Where(c => c.ThreadId == threadId).ToList());
 
-    public Task<IReadOnlyList<PaymoFile>> GetFilesAsync(string apiKey, CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<PaymoFile>>(Files);
+    public Task<IReadOnlyList<PaymoFile>> GetFilesAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoFile>>(Files.Where(f => f.ProjectId == paymoProjectId).ToList());
 
     public Task<(byte[] Bytes, string ContentType)?> GetFileBytesAsync(string apiKey, long paymoFileId, CancellationToken ct = default)
         => Task.FromResult<(byte[], string)?>((System.Text.Encoding.UTF8.GetBytes($"sandbox file {paymoFileId}"), "application/octet-stream"));

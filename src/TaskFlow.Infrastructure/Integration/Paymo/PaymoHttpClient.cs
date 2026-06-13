@@ -76,9 +76,10 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
             GetInt(el, "seq"), GetNullableLong(el, "milestone_id")));
     }
 
-    public async Task<IReadOnlyList<PaymoMilestone>> GetMilestonesAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<PaymoMilestone>> GetMilestonesAsync(string apiKey, CancellationToken ct = default)
     {
-        var root = await GetJsonAsync(apiKey, "milestones" + WhereSuffix($"project_id={paymoProjectId}", null), ct);
+        // Paymo rejects ?where=project_id on milestones; fetch all and group by project_id client-side.
+        var root = await GetJsonAsync(apiKey, "milestones", ct);
         return Parse(root, "milestones", el => new PaymoMilestone(
             GetLong(el, "id"), GetLong(el, "project_id"), GetString(el, "name") ?? "", GetDate(el, "due_date"), GetBool(el, "complete")));
     }
@@ -94,9 +95,10 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
             GetNullableLong(el, "thread_id"), AllUserIds(el, "users"), GetNullableLong(el, "status_id")));
     }
 
-    public async Task<IReadOnlyList<PaymoSubtask>> GetSubtasksAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<PaymoSubtask>> GetSubtasksAsync(string apiKey, CancellationToken ct = default)
     {
-        var root = await GetJsonAsync(apiKey, "subtasks" + WhereSuffix($"project_id={paymoProjectId}", null), ct);
+        // Paymo only filters subtasks by task_id; fetch all and map to imported tasks client-side.
+        var root = await GetJsonAsync(apiKey, "subtasks", ct);
         return Parse(root, "subtasks", el => new PaymoSubtask(
             GetLong(el, "id"), GetLong(el, "task_id"), GetString(el, "name") ?? "", GetBool(el, "complete"), GetInt(el, "seq")));
     }
@@ -158,17 +160,19 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
             GetString(el, "description"), GetNullableLong(el, "thread_id"), GetNullableLong(el, "user_id")));
     }
 
-    public async Task<IReadOnlyList<PaymoComment>> GetCommentsAsync(string apiKey, CancellationToken ct = default)
+    public async Task<IReadOnlyList<PaymoComment>> GetCommentsAsync(string apiKey, long threadId, CancellationToken ct = default)
     {
-        var root = await GetJsonAsync(apiKey, "comments", ct);
+        // Comments require a mandatory thread_id filter.
+        var root = await GetJsonAsync(apiKey, "comments" + WhereSuffix($"thread_id={threadId}", null), ct);
         return Parse(root, "comments", el => new PaymoComment(
             GetLong(el, "id"), GetNullableLong(el, "thread_id"), GetString(el, "content") ?? "",
             GetNullableLong(el, "user_id"), GetDate(el, "created_on")));
     }
 
-    public async Task<IReadOnlyList<PaymoFile>> GetFilesAsync(string apiKey, CancellationToken ct = default)
+    public async Task<IReadOnlyList<PaymoFile>> GetFilesAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
     {
-        var root = await GetJsonAsync(apiKey, "files", ct);
+        // Files require a mandatory filter; scope by project (file payload still carries task/discussion/comment ids).
+        var root = await GetJsonAsync(apiKey, "files" + WhereSuffix($"project_id={paymoProjectId}", null), ct);
         return Parse(root, "files", el => new PaymoFile(
             GetLong(el, "id"), GetString(el, "original_filename") ?? GetString(el, "name") ?? $"file-{GetLong(el, "id")}",
             GetNullableLong(el, "project_id"), GetNullableLong(el, "task_id"),
@@ -273,7 +277,14 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
     private async Task<JsonElement> GetJsonAsync(string apiKey, string path, CancellationToken ct)
     {
         using var res = await SendAsync(apiKey, path, ct);
-        res.EnsureSuccessStatusCode();
+        if (!res.IsSuccessStatusCode)
+        {
+            // Surface the exact path + Paymo's error detail so a recorded migration error is diagnosable.
+            string body = "";
+            try { body = await res.Content.ReadAsStringAsync(ct); } catch { /* ignore */ }
+            if (body.Length > 300) body = body[..300];
+            throw new HttpRequestException($"Paymo GET {path} returned {(int)res.StatusCode} {res.ReasonPhrase}. {body}".Trim());
+        }
         var stream = await res.Content.ReadAsStreamAsync(ct);
         using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
         return doc.RootElement.Clone();

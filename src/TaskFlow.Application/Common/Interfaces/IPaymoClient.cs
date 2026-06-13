@@ -44,13 +44,15 @@ public interface IPaymoClient
     Task<IReadOnlyList<PaymoProjectStatus>> GetProjectStatusesAsync(string apiKey, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoProject>> GetProjectsAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoTaskList>> GetTaskListsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default);
-    Task<IReadOnlyList<PaymoMilestone>> GetMilestonesAsync(string apiKey, long paymoProjectId, CancellationToken ct = default);
+    // Milestones/subtasks can't be filtered by project_id (Paymo 400s) — fetch all once, group client-side.
+    Task<IReadOnlyList<PaymoMilestone>> GetMilestonesAsync(string apiKey, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoTask>> GetTasksAsync(string apiKey, long paymoProjectId, DateTime? modifiedSinceUtc = null, CancellationToken ct = default);
-    Task<IReadOnlyList<PaymoSubtask>> GetSubtasksAsync(string apiKey, long paymoProjectId, CancellationToken ct = default);
+    Task<IReadOnlyList<PaymoSubtask>> GetSubtasksAsync(string apiKey, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoTimeEntry>> GetTimeEntriesAsync(string apiKey, long paymoProjectId, DateTime? modifiedSinceUtc = null, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoDiscussion>> GetDiscussionsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default);
-    Task<IReadOnlyList<PaymoComment>> GetCommentsAsync(string apiKey, CancellationToken ct = default);
-    Task<IReadOnlyList<PaymoFile>> GetFilesAsync(string apiKey, CancellationToken ct = default);
+    // Comments require a mandatory thread_id filter; files require a mandatory project_id (or task/discussion) filter.
+    Task<IReadOnlyList<PaymoComment>> GetCommentsAsync(string apiKey, long threadId, CancellationToken ct = default);
+    Task<IReadOnlyList<PaymoFile>> GetFilesAsync(string apiKey, long paymoProjectId, CancellationToken ct = default);
     // Downloads a file's binary content. Returns null if unavailable.
     Task<(byte[] Bytes, string ContentType)?> GetFileBytesAsync(string apiKey, long paymoFileId, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoExpense>> GetExpensesAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default);

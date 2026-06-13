@@ -103,7 +103,7 @@ public class MigrationService(
 
             // 1) Users first, so tasks/time entries can reference real people.
             var userMap = new Dictionary<long, long>();
-            foreach (var u in await paymo.GetUsersAsync(apiKey, ct))
+            foreach (var u in await SafeFetchAsync(job, "User", 0, () => paymo.GetUsersAsync(apiKey, ct), ct))
             {
                 try { userMap[u.Id] = await UpsertUserAsync(u, ct); job.ProcessedRecords++; }
                 catch (Exception ex) { await RecordError(job, "User", u.Id, ex, u, ct); }
@@ -121,7 +121,7 @@ public class MigrationService(
 
             // 3) Clients, then their contacts.
             var clientMap = new Dictionary<long, long>();
-            foreach (var c in await paymo.GetClientsAsync(apiKey, since, ct))
+            foreach (var c in await SafeFetchAsync(job, "Client", 0, () => paymo.GetClientsAsync(apiKey, since, ct), ct))
             {
                 try { clientMap[c.Id] = await UpsertClientAsync(c, ct); job.ProcessedRecords++; }
                 catch (Exception ex) { await RecordError(job, "Client", c.Id, ex, c, ct); }
@@ -144,9 +144,17 @@ public class MigrationService(
             // maps so comments/files (fetched globally) can be anchored afterwards.
             var ctx = new ImportContext(userMap);
             foreach (var kv in wfStatuses) ctx.WorkflowStatus[kv.Key] = kv.Value;
-            var projects = await paymo.GetProjectsAsync(apiKey, since, ct);
+            var projects = await SafeFetchAsync(job, "Project", 0, () => paymo.GetProjectsAsync(apiKey, since, ct), ct);
             job.ProjectsTotal = projects.Count;
             await db.SaveChangesAsync(ct);
+
+            // Milestones can't be filtered by project_id (Paymo 400s) — fetch all once, group by project.
+            var milestonesByProject = new Dictionary<long, List<PaymoMilestone>>();
+            foreach (var m in await SafeFetchAsync(job, "Milestone", 0, () => paymo.GetMilestonesAsync(apiKey, ct), ct))
+            {
+                if (!milestonesByProject.TryGetValue(m.ProjectId, out var list)) { list = new(); milestonesByProject[m.ProjectId] = list; }
+                list.Add(m);
+            }
 
             foreach (var p in projects)
             {
@@ -155,25 +163,31 @@ public class MigrationService(
                 catch (Exception ex) { await RecordError(job, "Project", p.Id, ex, p, ct); job.ProjectsDone++; await db.SaveChangesAsync(ct); continue; }
 
                 ctx.ProjectByPaymo[p.Id] = localProjectId;
-                await ImportProjectChildren(job, apiKey, p.Id, localProjectId, since, ctx, ct);
+                var projMilestones = milestonesByProject.TryGetValue(p.Id, out var ms) ? ms : (IReadOnlyList<PaymoMilestone>)[];
+                // Never let one project's failure abort the whole run — record it and move on.
+                try { await ImportProjectChildren(job, apiKey, p.Id, localProjectId, since, ctx, projMilestones, ct); }
+                catch (Exception ex) { await RecordError(job, "ProjectChildren", p.Id, ex, p, ct); }
 
                 job.ProjectsDone++;
                 job.Message = $"Imported {job.ProjectsDone}/{job.ProjectsTotal} projects · {job.ProcessedRecords} records";
                 await db.SaveChangesAsync(ct);   // persist progress per project for live polling
             }
 
-            // 5) Comments (global; anchored to imported task/discussion threads).
+            // 5) Subtasks (global; can't filter by project_id, so fetch all and map to imported tasks).
+            await ImportSubtasksAsync(job, apiKey, ctx, ct);
+
+            // 6) Comments (per imported thread; comments require a mandatory thread_id filter).
             await ImportCommentsAsync(job, apiKey, ctx, ct);
 
-            // 6) Files (global; downloaded + stored, attached to task/comment/project).
+            // 7) Files (per project; files require a mandatory filter — anchored to task/comment/project).
             await ImportFilesAsync(job, apiKey, ctx, ct);
             await db.SaveChangesAsync(ct);
 
-            // 7) Financials (global): expenses, invoices, invoice payments, estimates.
+            // 8) Financials (global): expenses, invoices, invoice payments, estimates.
             await ImportFinancialsAsync(job, apiKey, clientMap, ctx, since, ct);
             await db.SaveChangesAsync(ct);
 
-            // 8) Bookings (scheduling): resolve user_task_id via users_tasks, anchor to imported project/task/user.
+            // 9) Bookings (scheduling): resolve user_task_id via users_tasks, anchor to imported project/task/user.
             await ImportBookingsAsync(job, apiKey, ctx, ct);
             await db.SaveChangesAsync(ct);
 
@@ -207,13 +221,13 @@ public class MigrationService(
     }
 
     private async Task ImportProjectChildren(MigrationJob job, string apiKey, long paymoProjectId, long localProjectId,
-        DateTime? since, ImportContext ctx, CancellationToken ct)
+        DateTime? since, ImportContext ctx, IReadOnlyList<PaymoMilestone> milestones, CancellationToken ct)
     {
         var userMap = ctx.UserMap;
 
-        // Milestones (project-level), so tasks can be linked through their task list.
+        // Milestones (project-level, supplied from the global fetch), so tasks can link through their task list.
         var milestoneMap = new Dictionary<long, long>();
-        foreach (var m in await paymo.GetMilestonesAsync(apiKey, paymoProjectId, ct))
+        foreach (var m in milestones)
         {
             try { milestoneMap[m.Id] = await UpsertMilestoneAsync(m, localProjectId, ct); job.ProcessedRecords++; }
             catch (Exception ex) { await RecordError(job, "Milestone", m.Id, ex, m, ct); }
@@ -222,7 +236,7 @@ public class MigrationService(
         // Task lists (capture each list's milestone link for task-level wiring).
         var listMap = new Dictionary<long, long>();
         var listMilestone = new Dictionary<long, long>(); // paymo list id -> paymo milestone id
-        foreach (var l in await paymo.GetTaskListsAsync(apiKey, paymoProjectId, ct))
+        foreach (var l in await SafeFetchAsync(job, "TaskList", paymoProjectId, () => paymo.GetTaskListsAsync(apiKey, paymoProjectId, ct), ct))
         {
             try
             {
@@ -234,7 +248,7 @@ public class MigrationService(
         }
 
         // Tasks (+ multi-assignee + milestone linkage via their list).
-        foreach (var t in await paymo.GetTasksAsync(apiKey, paymoProjectId, since, ct))
+        foreach (var t in await SafeFetchAsync(job, "Task", paymoProjectId, () => paymo.GetTasksAsync(apiKey, paymoProjectId, since, ct), ct))
         {
             try
             {
@@ -250,16 +264,8 @@ public class MigrationService(
             catch (Exception ex) { await RecordError(job, "Task", t.Id, ex, t, ct); }
         }
 
-        // Subtasks -> local checklist items under the parent task.
-        foreach (var s in await paymo.GetSubtasksAsync(apiKey, paymoProjectId, ct))
-        {
-            if (!ctx.TaskByPaymo.TryGetValue(s.TaskId, out var localTask)) continue;
-            try { await UpsertSubtaskAsync(s, localTask, ct); job.ProcessedRecords++; }
-            catch (Exception ex) { await RecordError(job, "Subtask", s.Id, ex, s, ct); }
-        }
-
         // Discussions (+ description as first post).
-        foreach (var d in await paymo.GetDiscussionsAsync(apiKey, paymoProjectId, ct))
+        foreach (var d in await SafeFetchAsync(job, "Discussion", paymoProjectId, () => paymo.GetDiscussionsAsync(apiKey, paymoProjectId, ct), ct))
         {
             try
             {
@@ -273,7 +279,7 @@ public class MigrationService(
         }
 
         // Time entries.
-        foreach (var e in await paymo.GetTimeEntriesAsync(apiKey, paymoProjectId, since, ct))
+        foreach (var e in await SafeFetchAsync(job, "TimeEntry", paymoProjectId, () => paymo.GetTimeEntriesAsync(apiKey, paymoProjectId, since, ct), ct))
         {
             try
             {
@@ -286,59 +292,73 @@ public class MigrationService(
         }
     }
 
+    // Subtasks can't be filtered by project_id; fetch all once and map to imported tasks by task_id.
+    private async Task ImportSubtasksAsync(MigrationJob job, string apiKey, ImportContext ctx, CancellationToken ct)
+    {
+        foreach (var s in await SafeFetchAsync(job, "Subtask", 0, () => paymo.GetSubtasksAsync(apiKey, ct), ct))
+        {
+            if (!ctx.TaskByPaymo.TryGetValue(s.TaskId, out var localTask)) continue;   // subtask of an un-imported task
+            try { await UpsertSubtaskAsync(s, localTask, ct); job.ProcessedRecords++; }
+            catch (Exception ex) { await RecordError(job, "Subtask", s.Id, ex, s, ct); }
+        }
+        job.Message = $"Imported subtasks… {job.ProcessedRecords} records";
+        await db.SaveChangesAsync(ct);
+    }
+
     // Comments are polymorphic: anchor by thread_id to a task (-> Comment) or a discussion (-> DiscussionPost).
+    // Paymo requires a mandatory thread_id filter, so fetch per imported thread (deduped across task+discussion threads).
     private async Task ImportCommentsAsync(MigrationJob job, string apiKey, ImportContext ctx, CancellationToken ct)
     {
-        IReadOnlyList<PaymoComment> comments;
-        try { comments = await paymo.GetCommentsAsync(apiKey, ct); }
-        catch (Exception ex) { await RecordError(job, "Comment", 0, ex, "comments", ct); return; }
-
-        foreach (var c in comments)
+        var threadIds = ctx.ThreadToTask.Keys.Concat(ctx.ThreadToDiscussion.Keys).Distinct();
+        foreach (var threadId in threadIds)
         {
-            try
+            foreach (var c in await SafeFetchAsync(job, "Comment", threadId, () => paymo.GetCommentsAsync(apiKey, threadId, ct), ct))
             {
-                long author = c.UserId is { } u && ctx.UserMap.TryGetValue(u, out var lu) ? lu : _runUserId;
-                if (c.ThreadId is { } th && ctx.ThreadToTask.TryGetValue(th, out var localTask))
+                try
                 {
-                    var local = await UpsertCommentAsync(c, localTask, author, ct);
-                    if (local is { } lid) ctx.CommentByPaymo[c.Id] = lid;
-                    job.ProcessedRecords++;
+                    long author = c.UserId is { } u && ctx.UserMap.TryGetValue(u, out var lu) ? lu : _runUserId;
+                    if (c.ThreadId is { } th && ctx.ThreadToTask.TryGetValue(th, out var localTask))
+                    {
+                        var local = await UpsertCommentAsync(c, localTask, author, ct);
+                        if (local is { } lid) ctx.CommentByPaymo[c.Id] = lid;
+                        job.ProcessedRecords++;
+                    }
+                    else if (c.ThreadId is { } th2 && ctx.ThreadToDiscussion.TryGetValue(th2, out var localDisc))
+                    {
+                        await UpsertDiscussionPostAsync(c, localDisc, author, ct);
+                        job.ProcessedRecords++;
+                    }
+                    // else: comment on an un-imported thread — skipped.
                 }
-                else if (c.ThreadId is { } th2 && ctx.ThreadToDiscussion.TryGetValue(th2, out var localDisc))
-                {
-                    await UpsertDiscussionPostAsync(c, localDisc, author, ct);
-                    job.ProcessedRecords++;
-                }
-                // else: comment on an un-imported thread (file/project) — skipped.
+                catch (Exception ex) { await RecordError(job, "Comment", c.Id, ex, c, ct); }
             }
-            catch (Exception ex) { await RecordError(job, "Comment", c.Id, ex, c, ct); }
         }
         job.Message = $"Imported comments… {job.ProcessedRecords} records";
         await db.SaveChangesAsync(ct);
     }
 
+    // Files require a mandatory filter; fetch per imported project, then anchor each file (Task > Comment > Project).
     private async Task ImportFilesAsync(MigrationJob job, string apiKey, ImportContext ctx, CancellationToken ct)
     {
-        IReadOnlyList<PaymoFile> files;
-        try { files = await paymo.GetFilesAsync(apiKey, ct); }
-        catch (Exception ex) { await RecordError(job, "File", 0, ex, "files", ct); return; }
-
-        foreach (var f in files)
+        foreach (var (paymoProjectId, _) in ctx.ProjectByPaymo)
         {
-            try
+            foreach (var f in await SafeFetchAsync(job, "File", paymoProjectId, () => paymo.GetFilesAsync(apiKey, paymoProjectId, ct), ct))
             {
-                // Resolve attachment target (Task > Comment > Project).
-                AttachmentTargetType? targetType = null; long targetId = 0;
-                if (f.TaskId is { } tid && ctx.TaskByPaymo.TryGetValue(tid, out var lt)) { targetType = AttachmentTargetType.Task; targetId = lt; }
-                else if (f.CommentId is { } cid && ctx.CommentByPaymo.TryGetValue(cid, out var lc)) { targetType = AttachmentTargetType.Comment; targetId = lc; }
-                else if (f.ProjectId is { } pid && ctx.ProjectByPaymo.TryGetValue(pid, out var lp)) { targetType = AttachmentTargetType.Project; targetId = lp; }
-                else if (f.DiscussionId is { } did && ctx.DiscussionByPaymo.TryGetValue(did, out _) && f.ProjectId is { } pid2 && ctx.ProjectByPaymo.TryGetValue(pid2, out var lp2)) { targetType = AttachmentTargetType.Project; targetId = lp2; }
-                if (targetType is null) continue; // no imported target to attach to
+                try
+                {
+                    // Resolve attachment target (Task > Comment > Project).
+                    AttachmentTargetType? targetType = null; long targetId = 0;
+                    if (f.TaskId is { } tid && ctx.TaskByPaymo.TryGetValue(tid, out var lt)) { targetType = AttachmentTargetType.Task; targetId = lt; }
+                    else if (f.CommentId is { } cid && ctx.CommentByPaymo.TryGetValue(cid, out var lc)) { targetType = AttachmentTargetType.Comment; targetId = lc; }
+                    else if (f.ProjectId is { } pid && ctx.ProjectByPaymo.TryGetValue(pid, out var lp)) { targetType = AttachmentTargetType.Project; targetId = lp; }
+                    else if (f.DiscussionId is { } did && ctx.DiscussionByPaymo.TryGetValue(did, out _) && f.ProjectId is { } pid2 && ctx.ProjectByPaymo.TryGetValue(pid2, out var lp2)) { targetType = AttachmentTargetType.Project; targetId = lp2; }
+                    if (targetType is null) continue; // no imported target to attach to
 
-                await UpsertFileAsync(f, targetType.Value, targetId, apiKey, ct);
-                job.ProcessedRecords++;
+                    await UpsertFileAsync(f, targetType.Value, targetId, apiKey, ct);
+                    job.ProcessedRecords++;
+                }
+                catch (Exception ex) { await RecordError(job, "File", f.Id, ex, f, ct); }
             }
-            catch (Exception ex) { await RecordError(job, "File", f.Id, ex, f, ct); }
         }
         job.Message = $"Imported files… {job.ProcessedRecords} records";
         await db.SaveChangesAsync(ct);
@@ -1065,6 +1085,15 @@ public class MigrationService(
     }
 
     private static string? SafeJson(object o) { try { return JsonSerializer.Serialize(o); } catch { return null; } }
+
+    // Fetch a Paymo list resiliently: a failure (e.g. 400 on an unsupported filter) is recorded as a
+    // non-fatal migration error and yields an empty list, so one bad resource never aborts the whole run.
+    private async Task<IReadOnlyList<T>> SafeFetchAsync<T>(MigrationJob job, string entityType, long contextId,
+        Func<Task<IReadOnlyList<T>>> fetch, CancellationToken ct)
+    {
+        try { return await fetch(); }
+        catch (Exception ex) { await RecordError(job, entityType, contextId, ex, $"fetch {entityType} (ctx {contextId})", ct); return []; }
+    }
 
     public async Task<MigrationJobDto> GetJobAsync(long jobId, CancellationToken ct = default)
     {
