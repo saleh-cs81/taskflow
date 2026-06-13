@@ -59,6 +59,16 @@ public class TaskWatcher
     public User User { get; set; } = null!;
 }
 
+// All users assigned to a task (Paymo tasks are many-to-many with users).
+// The primary assignee is still kept on TaskItem.AssigneeId for the existing UI.
+public class TaskAssignee
+{
+    public long TaskId { get; set; }
+    public long UserId { get; set; }
+    public TaskItem Task { get; set; } = null!;
+    public User User { get; set; } = null!;
+}
+
 public class TaskDependency : TenantEntity
 {
     public long PredecessorTaskId { get; set; }

@@ -1,20 +1,37 @@
 namespace TaskFlow.Application.Common.Interfaces;
 
-// Shapes mirror the Paymo REST API (simplified to the fields we migrate).
-public record PaymoUser(long Id, string Name, string? Email, bool Active);
-public record PaymoProject(long Id, string Name, string? Description, bool Active);
-public record PaymoTaskList(long Id, long ProjectId, string Name);
-// AssigneeUserId = first id from Paymo's task 'users' array; Priority = Paymo 100/75/50/25.
-public record PaymoTask(long Id, long ProjectId, long? TaskListId, string Name, string? Description, bool Complete, DateTime? DueDate, long? AssigneeUserId, int Priority);
-// UserId = Paymo 'user_id' (who logged the time).
-public record PaymoTimeEntry(long Id, long ProjectId, long? TaskId, long? UserId, DateTime Start, DateTime End, int DurationSeconds, string? Description, bool Billable);
+// Shapes mirror the Paymo REST API (fields we migrate).
+public record PaymoUser(long Id, string Name, string? Email, bool Active, string? Type);
+public record PaymoClient(long Id, string Name, string? Email, string? Phone, string? Address, string? City, string? Country, string? Website, bool Active);
+public record PaymoClientContact(long Id, long ClientId, string Name, string? Email, string? Phone, string? Position, bool IsMain);
+public record PaymoProjectStatus(long Id, string Name);
+public record PaymoProject(
+    long Id, string Name, string? Description, bool Active,
+    long? ClientId, long? StatusId, string? Code, string? Color, decimal? BudgetHours, bool Billable);
+public record PaymoTaskList(long Id, long ProjectId, string Name, int Seq, long? MilestoneId);
+public record PaymoMilestone(long Id, long ProjectId, string Name, DateTime? DueDate, bool Complete);
+// AssigneeUserIds = all ids from Paymo task 'users'; first is treated as primary. Priority = Paymo 100/75/50/25.
+public record PaymoTask(
+    long Id, long ProjectId, long? TaskListId, string Name, string? Description, bool Complete,
+    DateTime? DueDate, DateTime? StartDate, DateTime? CompletedOn, int Priority, int Seq, string? Code,
+    IReadOnlyList<long> AssigneeUserIds);
+public record PaymoSubtask(long Id, long TaskId, string Name, bool Complete, int Seq);
+// UserId = Paymo 'user_id' (who logged the time); Billable = real 'billable' flag; Billed = invoiced.
+public record PaymoTimeEntry(
+    long Id, long ProjectId, long? TaskId, long? UserId, DateTime Start, DateTime End,
+    int DurationSeconds, string? Description, bool Billable, bool Billed);
 
 public interface IPaymoClient
 {
     Task<bool> ValidateKeyAsync(string apiKey, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoUser>> GetUsersAsync(string apiKey, CancellationToken ct = default);
+    Task<IReadOnlyList<PaymoClient>> GetClientsAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default);
+    Task<IReadOnlyList<PaymoClientContact>> GetClientContactsAsync(string apiKey, CancellationToken ct = default);
+    Task<IReadOnlyList<PaymoProjectStatus>> GetProjectStatusesAsync(string apiKey, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoProject>> GetProjectsAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoTaskList>> GetTaskListsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default);
+    Task<IReadOnlyList<PaymoMilestone>> GetMilestonesAsync(string apiKey, long paymoProjectId, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoTask>> GetTasksAsync(string apiKey, long paymoProjectId, DateTime? modifiedSinceUtc = null, CancellationToken ct = default);
+    Task<IReadOnlyList<PaymoSubtask>> GetSubtasksAsync(string apiKey, long paymoProjectId, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoTimeEntry>> GetTimeEntriesAsync(string apiKey, long paymoProjectId, DateTime? modifiedSinceUtc = null, CancellationToken ct = default);
 }

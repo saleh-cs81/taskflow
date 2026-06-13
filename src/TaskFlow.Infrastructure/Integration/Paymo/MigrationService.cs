@@ -107,10 +107,34 @@ public class MigrationService(
                 try { userMap[u.Id] = await UpsertUserAsync(u, ct); job.ProcessedRecords++; }
                 catch (Exception ex) { await RecordError(job, "User", u.Id, ex, u, ct); }
             }
-            job.Message = $"Imported {userMap.Count} users…";
+
+            // 2) Project statuses (reference vocabulary: paymo status id -> name).
+            var statusMap = new Dictionary<long, string>();
+            try { foreach (var s in await paymo.GetProjectStatusesAsync(apiKey, ct)) statusMap[s.Id] = s.Name; }
+            catch (Exception ex) { await RecordError(job, "ProjectStatus", 0, ex, "statuses", ct); }
+
+            // 3) Clients, then their contacts.
+            var clientMap = new Dictionary<long, long>();
+            foreach (var c in await paymo.GetClientsAsync(apiKey, since, ct))
+            {
+                try { clientMap[c.Id] = await UpsertClientAsync(c, ct); job.ProcessedRecords++; }
+                catch (Exception ex) { await RecordError(job, "Client", c.Id, ex, c, ct); }
+            }
+            try
+            {
+                foreach (var cc in await paymo.GetClientContactsAsync(apiKey, ct))
+                {
+                    if (!clientMap.TryGetValue(cc.ClientId, out var localClient)) continue;
+                    try { await UpsertClientContactAsync(cc, localClient, ct); job.ProcessedRecords++; }
+                    catch (Exception ex) { await RecordError(job, "ClientContact", cc.Id, ex, cc, ct); }
+                }
+            }
+            catch (Exception ex) { await RecordError(job, "ClientContact", 0, ex, "contacts", ct); }
+
+            job.Message = $"Imported {userMap.Count} users, {clientMap.Count} clients…";
             await db.SaveChangesAsync(ct);
 
-            // 2) Projects (outer loop drives the progress bar).
+            // 4) Projects (outer loop drives the progress bar).
             var projects = await paymo.GetProjectsAsync(apiKey, since, ct);
             job.ProjectsTotal = projects.Count;
             await db.SaveChangesAsync(ct);
@@ -118,10 +142,10 @@ public class MigrationService(
             foreach (var p in projects)
             {
                 long localProjectId;
-                try { localProjectId = await UpsertProjectAsync(p, ct); job.ProcessedRecords++; }
+                try { localProjectId = await UpsertProjectAsync(p, clientMap, statusMap, ct); job.ProcessedRecords++; }
                 catch (Exception ex) { await RecordError(job, "Project", p.Id, ex, p, ct); job.ProjectsDone++; await db.SaveChangesAsync(ct); continue; }
 
-                await ImportListsTasksTime(job, apiKey, p.Id, localProjectId, since, userMap, ct);
+                await ImportProjectChildren(job, apiKey, p.Id, localProjectId, since, userMap, ct);
 
                 job.ProjectsDone++;
                 job.Message = $"Imported {job.ProjectsDone}/{job.ProjectsTotal} projects · {job.ProcessedRecords} records";
@@ -144,29 +168,56 @@ public class MigrationService(
         await db.SaveChangesAsync(ct);
     }
 
-    private async Task ImportListsTasksTime(MigrationJob job, string apiKey, long paymoProjectId, long localProjectId,
+    private async Task ImportProjectChildren(MigrationJob job, string apiKey, long paymoProjectId, long localProjectId,
         DateTime? since, IReadOnlyDictionary<long, long> userMap, CancellationToken ct)
     {
+        // Milestones (project-level), so tasks can be linked through their task list.
+        var milestoneMap = new Dictionary<long, long>();
+        foreach (var m in await paymo.GetMilestonesAsync(apiKey, paymoProjectId, ct))
+        {
+            try { milestoneMap[m.Id] = await UpsertMilestoneAsync(m, localProjectId, ct); job.ProcessedRecords++; }
+            catch (Exception ex) { await RecordError(job, "Milestone", m.Id, ex, m, ct); }
+        }
+
+        // Task lists (capture each list's milestone link for task-level wiring).
         var listMap = new Dictionary<long, long>();
+        var listMilestone = new Dictionary<long, long>(); // paymo list id -> paymo milestone id
         foreach (var l in await paymo.GetTaskListsAsync(apiKey, paymoProjectId, ct))
         {
-            try { listMap[l.Id] = await UpsertTaskListAsync(l, localProjectId, ct); job.ProcessedRecords++; }
+            try
+            {
+                listMap[l.Id] = await UpsertTaskListAsync(l, localProjectId, ct);
+                if (l.MilestoneId is { } mid) listMilestone[l.Id] = mid;
+                job.ProcessedRecords++;
+            }
             catch (Exception ex) { await RecordError(job, "TaskList", l.Id, ex, l, ct); }
         }
 
+        // Tasks (+ multi-assignee + milestone linkage via their list).
         var taskMap = new Dictionary<long, long>();
         foreach (var t in await paymo.GetTasksAsync(apiKey, paymoProjectId, since, ct))
         {
             try
             {
                 long? localList = t.TaskListId is { } lid && listMap.TryGetValue(lid, out var ll) ? ll : null;
-                long? assignee = t.AssigneeUserId is { } au && userMap.TryGetValue(au, out var lu) ? lu : null;
-                taskMap[t.Id] = await UpsertTaskAsync(t, localProjectId, localList, assignee, ct);
+                long? localMilestone = t.TaskListId is { } lid2 && listMilestone.TryGetValue(lid2, out var pm)
+                    && milestoneMap.TryGetValue(pm, out var lm) ? lm : null;
+                var assignees = t.AssigneeUserIds.Where(userMap.ContainsKey).Select(a => userMap[a]).ToList();
+                taskMap[t.Id] = await UpsertTaskAsync(t, localProjectId, localList, localMilestone, assignees, ct);
                 job.ProcessedRecords++;
             }
             catch (Exception ex) { await RecordError(job, "Task", t.Id, ex, t, ct); }
         }
 
+        // Subtasks -> local checklist items under the parent task.
+        foreach (var s in await paymo.GetSubtasksAsync(apiKey, paymoProjectId, ct))
+        {
+            if (!taskMap.TryGetValue(s.TaskId, out var localTask)) continue;
+            try { await UpsertSubtaskAsync(s, localTask, ct); job.ProcessedRecords++; }
+            catch (Exception ex) { await RecordError(job, "Subtask", s.Id, ex, s, ct); }
+        }
+
+        // Time entries.
         foreach (var e in await paymo.GetTimeEntriesAsync(apiKey, paymoProjectId, since, ct))
         {
             try
@@ -215,39 +266,157 @@ public class MigrationService(
         db.Users.Add(created);
         await db.SaveChangesAsync(ct);
 
-        var employee = await db.Roles.FirstOrDefaultAsync(r => r.NormalizedName == "EMPLOYEE", ct);
-        if (employee is not null) { db.UserRoles.Add(new UserRole { UserId = created.Id, RoleId = employee.Id }); await db.SaveChangesAsync(ct); }
+        // Map Paymo role (type) to the local system role instead of forcing Employee.
+        var role = await db.Roles.FirstOrDefaultAsync(r => r.NormalizedName == MapRole(u.Type), ct)
+            ?? await db.Roles.FirstOrDefaultAsync(r => r.NormalizedName == "EMPLOYEE", ct);
+        if (role is not null) { db.UserRoles.Add(new UserRole { UserId = created.Id, RoleId = role.Id }); await db.SaveChangesAsync(ct); }
 
         await AddMappingAsync("User", u.Id, created.Id, ct);
         return created.Id;
     }
 
-    private async Task<long> UpsertProjectAsync(PaymoProject p, CancellationToken ct)
+    private static string MapRole(string? paymoType)
+    {
+        var t = (paymoType ?? "").ToLowerInvariant();
+        if (t.Contains("admin") || t.Contains("owner")) return "COMPANYADMIN";
+        if (t.Contains("manager") || t.Contains("pm") || t.Contains("project")) return "PROJECTMANAGER";
+        if (t.Contains("guest") || t.Contains("client")) return "CLIENT";
+        return "EMPLOYEE";
+    }
+
+    private async Task<long> UpsertClientAsync(PaymoClient c, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(c.Name)) throw new InvalidOperationException("Client name is required.");
+        var existing = await FindMappingAsync("Client", c.Id, ct);
+        Client client;
+        if (existing is not null)
+            client = await db.Clients.FirstOrDefaultAsync(x => x.Id == existing.LocalId, ct) ?? new Client();
+        else
+            client = new Client();
+
+        client.Name = c.Name; client.ContactEmail = c.Email; client.Phone = c.Phone;
+        client.Address = c.Address; client.City = c.City; client.Country = c.Country; client.Website = c.Website;
+
+        if (existing is not null) { existing.LastSyncedUtc = clock.UtcNow; await db.SaveChangesAsync(ct); return existing.LocalId; }
+
+        db.Clients.Add(client);
+        await db.SaveChangesAsync(ct);
+        await AddMappingAsync("Client", c.Id, client.Id, ct);
+        return client.Id;
+    }
+
+    private async Task UpsertClientContactAsync(PaymoClientContact cc, long localClientId, CancellationToken ct)
+    {
+        var existing = await FindMappingAsync("ClientContact", cc.Id, ct);
+        if (existing is not null)
+        {
+            var row = await db.ClientContacts.FirstOrDefaultAsync(x => x.Id == existing.LocalId, ct);
+            if (row is not null) { row.Name = cc.Name; row.Email = cc.Email; row.Phone = cc.Phone; row.Position = cc.Position; row.IsMain = cc.IsMain; }
+            existing.LastSyncedUtc = clock.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+        var created = new ClientContact
+        {
+            ClientId = localClientId, Name = cc.Name, Email = cc.Email, Phone = cc.Phone, Position = cc.Position, IsMain = cc.IsMain
+        };
+        db.ClientContacts.Add(created);
+        await db.SaveChangesAsync(ct);
+        await AddMappingAsync("ClientContact", cc.Id, created.Id, ct);
+    }
+
+    private async Task<long> UpsertMilestoneAsync(PaymoMilestone m, long localProjectId, CancellationToken ct)
+    {
+        var status = m.Complete ? WorkStatus.Done : WorkStatus.Todo;
+        var existing = await FindMappingAsync("Milestone", m.Id, ct);
+        if (existing is not null)
+        {
+            var row = await db.Milestones.FirstOrDefaultAsync(x => x.Id == existing.LocalId, ct);
+            if (row is not null) { row.Name = m.Name; row.DueDate = m.DueDate; row.Status = status; }
+            existing.LastSyncedUtc = clock.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return existing.LocalId;
+        }
+        var created = new Milestone { ProjectId = localProjectId, Name = m.Name, DueDate = m.DueDate, Status = status };
+        db.Milestones.Add(created);
+        await db.SaveChangesAsync(ct);
+        await AddMappingAsync("Milestone", m.Id, created.Id, ct);
+        return created.Id;
+    }
+
+    private async Task UpsertSubtaskAsync(PaymoSubtask s, long localTaskId, CancellationToken ct)
+    {
+        var existing = await FindMappingAsync("Subtask", s.Id, ct);
+        if (existing is not null)
+        {
+            var row = await db.ChecklistItems.FirstOrDefaultAsync(x => x.Id == existing.LocalId, ct);
+            if (row is not null) { row.Text = s.Name; row.IsDone = s.Complete; row.Position = s.Seq * 1000; }
+            existing.LastSyncedUtc = clock.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+        var created = new ChecklistItem { TaskId = localTaskId, Text = s.Name, IsDone = s.Complete, Position = (s.Seq <= 0 ? 1 : s.Seq) * 1000 };
+        db.ChecklistItems.Add(created);
+        await db.SaveChangesAsync(ct);
+        await AddMappingAsync("Subtask", s.Id, created.Id, ct);
+    }
+
+    private async Task<long> UpsertProjectAsync(PaymoProject p, IReadOnlyDictionary<long, long> clientMap,
+        IReadOnlyDictionary<long, string> statusMap, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(p.Name)) throw new InvalidOperationException("Project name is required.");
+        long? localClient = p.ClientId is { } cid && clientMap.TryGetValue(cid, out var lc) ? lc : null;
+        var status = MapProjectStatus(p, statusMap);
+
         var existing = await FindMappingAsync("Project", p.Id, ct);
         if (existing is not null)
         {
             var proj = await db.Projects.FirstOrDefaultAsync(x => x.Id == existing.LocalId, ct);
-            if (proj is not null) { proj.Name = p.Name; proj.Description = p.Description; proj.Status = p.Active ? ProjectStatus.Active : ProjectStatus.Archived; }
+            if (proj is not null) ApplyProject(proj, p, localClient, status);
             existing.LastSyncedUtc = clock.UtcNow;
             await db.SaveChangesAsync(ct);
             return existing.LocalId;
         }
 
-        var created = new Project { Name = p.Name, Description = p.Description, Status = p.Active ? ProjectStatus.Active : ProjectStatus.Archived };
+        var created = new Project();
+        ApplyProject(created, p, localClient, status);
         db.Projects.Add(created);
         await db.SaveChangesAsync(ct);
         await AddMappingAsync("Project", p.Id, created.Id, ct);
         return created.Id;
     }
 
+    private static void ApplyProject(Project proj, PaymoProject p, long? localClient, ProjectStatus status)
+    {
+        proj.Name = p.Name; proj.Description = p.Description; proj.Status = status;
+        proj.ClientId = localClient; proj.Code = p.Code; proj.Color = p.Color;
+        proj.BudgetHours = p.BudgetHours; proj.IsBillable = p.Billable;
+    }
+
+    private static ProjectStatus MapProjectStatus(PaymoProject p, IReadOnlyDictionary<long, string> statusMap)
+    {
+        var name = (p.StatusId is { } sid && statusMap.TryGetValue(sid, out var n) ? n : "").ToLowerInvariant();
+        if (name.Contains("complete")) return ProjectStatus.Completed;
+        if (name.Contains("hold")) return ProjectStatus.OnHold;
+        if (name.Contains("cancel")) return ProjectStatus.Cancelled;
+        if (name.Contains("archiv")) return ProjectStatus.Archived;
+        if (name.Contains("proposal") || name.Contains("plan")) return ProjectStatus.Planned;
+        if (name.Contains("active")) return ProjectStatus.Active;
+        return p.Active ? ProjectStatus.Active : ProjectStatus.Archived;   // fallback to the boolean
+    }
+
     private async Task<long> UpsertTaskListAsync(PaymoTaskList l, long localProjectId, CancellationToken ct)
     {
+        var pos = l.Seq > 0 ? l.Seq * 1000.0 : 1000;
         var existing = await FindMappingAsync("TaskList", l.Id, ct);
-        if (existing is not null) { existing.LastSyncedUtc = clock.UtcNow; await db.SaveChangesAsync(ct); return existing.LocalId; }
-
-        var pos = (await db.TaskLists.Where(x => x.ProjectId == localProjectId).MaxAsync(x => (double?)x.Position, ct) ?? 0) + 1000;
+        if (existing is not null)
+        {
+            var row = await db.TaskLists.FirstOrDefaultAsync(x => x.Id == existing.LocalId, ct);
+            if (row is not null) { row.Name = l.Name; row.Position = pos; }   // refresh name + ordering on re-sync
+            existing.LastSyncedUtc = clock.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return existing.LocalId;
+        }
         var created = new TaskList { ProjectId = localProjectId, Name = l.Name, Position = pos };
         db.TaskLists.Add(created);
         await db.SaveChangesAsync(ct);
@@ -255,37 +424,60 @@ public class MigrationService(
         return created.Id;
     }
 
-    private async Task<long> UpsertTaskAsync(PaymoTask t, long localProjectId, long? localListId, long? assigneeId, CancellationToken ct)
+    private async Task<long> UpsertTaskAsync(PaymoTask t, long localProjectId, long? localListId, long? localMilestoneId,
+        IReadOnlyList<long> assigneeIds, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(t.Name)) throw new InvalidOperationException("Task title is required.");
         var status = t.Complete ? WorkStatus.Done : WorkStatus.Todo;
         var priority = MapPriority(t.Priority);
+        var primary = assigneeIds.Count > 0 ? assigneeIds[0] : (long?)null;
+        var pos = t.Seq > 0 ? t.Seq * 1000.0 : 1000;
+        // Use Paymo's real completion timestamp; only synthesize if complete but no date provided.
+        DateTime? completedAt = t.Complete ? (t.CompletedOn ?? clock.UtcNow) : null;
+
         var existing = await FindMappingAsync("Task", t.Id, ct);
+        long localId;
         if (existing is not null)
         {
             var task = await db.Tasks.FirstOrDefaultAsync(x => x.Id == existing.LocalId, ct);
             if (task is not null)
             {
                 task.Title = t.Name; task.Description = t.Description; task.TaskListId = localListId;
-                task.Status = status; task.Priority = priority; task.DueDate = t.DueDate; task.AssigneeId = assigneeId;
-                task.CompletedAtUtc = t.Complete ? (task.CompletedAtUtc ?? clock.UtcNow) : null;
+                task.MilestoneId = localMilestoneId; task.Status = status; task.Priority = priority;
+                task.DueDate = t.DueDate; task.StartDate = t.StartDate; task.AssigneeId = primary;
+                task.Position = pos; task.CompletedAtUtc = completedAt;
             }
             existing.LastSyncedUtc = clock.UtcNow;
             await db.SaveChangesAsync(ct);
-            return existing.LocalId;
+            localId = existing.LocalId;
+        }
+        else
+        {
+            var created = new TaskItem
+            {
+                ProjectId = localProjectId, TaskListId = localListId, MilestoneId = localMilestoneId,
+                Title = t.Name, Description = t.Description, Status = status, Priority = priority,
+                DueDate = t.DueDate, StartDate = t.StartDate, AssigneeId = primary, Position = pos,
+                CompletedAtUtc = completedAt
+            };
+            db.Tasks.Add(created);
+            await db.SaveChangesAsync(ct);
+            await AddMappingAsync("Task", t.Id, created.Id, ct);
+            localId = created.Id;
         }
 
-        var pos = (await db.Tasks.Where(x => x.TaskListId == localListId).MaxAsync(x => (double?)x.Position, ct) ?? 0) + 1000;
-        var created = new TaskItem
-        {
-            ProjectId = localProjectId, TaskListId = localListId, Title = t.Name, Description = t.Description,
-            Status = status, Priority = priority, DueDate = t.DueDate, AssigneeId = assigneeId, Position = pos,
-            CompletedAtUtc = t.Complete ? clock.UtcNow : null
-        };
-        db.Tasks.Add(created);
+        await SyncAssigneesAsync(localId, assigneeIds, ct);
+        return localId;
+    }
+
+    // Reconcile the many-to-many TaskAssignee set to exactly the imported assignees.
+    private async Task SyncAssigneesAsync(long taskId, IReadOnlyList<long> assigneeIds, CancellationToken ct)
+    {
+        var current = await db.TaskAssignees.Where(a => a.TaskId == taskId).ToListAsync(ct);
+        foreach (var stale in current.Where(a => !assigneeIds.Contains(a.UserId))) db.TaskAssignees.Remove(stale);
+        foreach (var uid in assigneeIds.Where(uid => current.All(a => a.UserId != uid)))
+            db.TaskAssignees.Add(new TaskAssignee { TaskId = taskId, UserId = uid });
         await db.SaveChangesAsync(ct);
-        await AddMappingAsync("Task", t.Id, created.Id, ct);
-        return created.Id;
     }
 
     private async Task UpsertTimeEntryAsync(PaymoTimeEntry e, long localProjectId, long? localTaskId, long ownerUserId, CancellationToken ct)
@@ -324,15 +516,24 @@ public class MigrationService(
 
         // Child → parent order; ExecuteDelete is a hard delete (bypasses soft-delete interceptor).
         var entryIds = Ids("TimeEntry");
+        var subtaskIds = Ids("Subtask");      // -> local ChecklistItems
         var taskIds = Ids("Task");
         var listIds = Ids("TaskList");
+        var milestoneIds = Ids("Milestone");
         var projIds = Ids("Project");
+        var contactIds = Ids("ClientContact");
+        var clientIds = Ids("Client");
         var userIds = Ids("User");
 
         if (entryIds.Length > 0) await db.TimeEntries.IgnoreQueryFilters().Where(x => entryIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
+        if (subtaskIds.Length > 0) await db.ChecklistItems.IgnoreQueryFilters().Where(x => subtaskIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
+        if (taskIds.Length > 0) await db.TaskAssignees.Where(x => taskIds.Contains(x.TaskId)).ExecuteDeleteAsync(ct);
         if (taskIds.Length > 0) await db.Tasks.IgnoreQueryFilters().Where(x => taskIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
         if (listIds.Length > 0) await db.TaskLists.IgnoreQueryFilters().Where(x => listIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
+        if (milestoneIds.Length > 0) await db.Milestones.IgnoreQueryFilters().Where(x => milestoneIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
         if (projIds.Length > 0) await db.Projects.IgnoreQueryFilters().Where(x => projIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
+        if (contactIds.Length > 0) await db.ClientContacts.IgnoreQueryFilters().Where(x => contactIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
+        if (clientIds.Length > 0) await db.Clients.IgnoreQueryFilters().Where(x => clientIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
         if (userIds.Length > 0) await db.Users.IgnoreQueryFilters().Where(x => userIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
 
         var tid = tenant.TenantId;

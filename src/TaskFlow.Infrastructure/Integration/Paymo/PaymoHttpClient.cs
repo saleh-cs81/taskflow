@@ -34,23 +34,53 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
     {
         var root = await GetJsonAsync(apiKey, "users", ct);
         return Parse(root, "users", el => new PaymoUser(
-            GetLong(el, "id"), GetString(el, "name") ?? "", GetString(el, "email"), GetBool(el, "active")));
+            GetLong(el, "id"), GetString(el, "name") ?? "", GetString(el, "email"), GetBool(el, "active"), GetString(el, "type")));
+    }
+
+    public async Task<IReadOnlyList<PaymoClient>> GetClientsAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "clients" + WhereSuffix(null, modifiedSinceUtc), ct);
+        return Parse(root, "clients", el => new PaymoClient(
+            GetLong(el, "id"), GetString(el, "name") ?? "", GetString(el, "email"), GetString(el, "phone"),
+            GetString(el, "address"), GetString(el, "city"), GetString(el, "country"), GetString(el, "website"), GetBool(el, "active")));
+    }
+
+    public async Task<IReadOnlyList<PaymoClientContact>> GetClientContactsAsync(string apiKey, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "clientcontacts", ct);
+        return Parse(root, "clientcontacts", el => new PaymoClientContact(
+            GetLong(el, "id"), GetLong(el, "client_id"), GetString(el, "name") ?? "",
+            GetString(el, "email"), GetString(el, "phone"), GetString(el, "position"), GetBool(el, "is_main")));
+    }
+
+    public async Task<IReadOnlyList<PaymoProjectStatus>> GetProjectStatusesAsync(string apiKey, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "projectstatuses", ct);
+        return Parse(root, "projectstatuses", el => new PaymoProjectStatus(GetLong(el, "id"), GetString(el, "name") ?? ""));
     }
 
     public async Task<IReadOnlyList<PaymoProject>> GetProjectsAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
     {
-        // Projects have no project_id filter; only apply an incremental updated_on filter.
-        var path = "projects" + WhereSuffix(null, modifiedSinceUtc);
-        var root = await GetJsonAsync(apiKey, path, ct);
+        var root = await GetJsonAsync(apiKey, "projects" + WhereSuffix(null, modifiedSinceUtc), ct);
         return Parse(root, "projects", el => new PaymoProject(
-            GetLong(el, "id"), GetString(el, "name") ?? "", GetString(el, "description"), GetBool(el, "active")));
+            GetLong(el, "id"), GetString(el, "name") ?? "", GetString(el, "description"), GetBool(el, "active"),
+            GetNullableLong(el, "client_id"), GetNullableLong(el, "status_id"), GetString(el, "code"),
+            GetString(el, "color"), GetNullableDecimal(el, "budget_hours"), GetBool(el, "billable")));
     }
 
     public async Task<IReadOnlyList<PaymoTaskList>> GetTaskListsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
     {
         var root = await GetJsonAsync(apiKey, "tasklists" + WhereSuffix($"project_id={paymoProjectId}", null), ct);
         return Parse(root, "tasklists", el => new PaymoTaskList(
-            GetLong(el, "id"), GetLong(el, "project_id"), GetString(el, "name") ?? ""));
+            GetLong(el, "id"), GetLong(el, "project_id"), GetString(el, "name") ?? "",
+            GetInt(el, "seq"), GetNullableLong(el, "milestone_id")));
+    }
+
+    public async Task<IReadOnlyList<PaymoMilestone>> GetMilestonesAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "milestones" + WhereSuffix($"project_id={paymoProjectId}", null), ct);
+        return Parse(root, "milestones", el => new PaymoMilestone(
+            GetLong(el, "id"), GetLong(el, "project_id"), GetString(el, "name") ?? "", GetDate(el, "due_date"), GetBool(el, "complete")));
     }
 
     public async Task<IReadOnlyList<PaymoTask>> GetTasksAsync(string apiKey, long paymoProjectId, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
@@ -58,17 +88,27 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
         var root = await GetJsonAsync(apiKey, "tasks" + WhereSuffix($"project_id={paymoProjectId}", modifiedSinceUtc), ct);
         return Parse(root, "tasks", el => new PaymoTask(
             GetLong(el, "id"), GetLong(el, "project_id"), GetNullableLong(el, "tasklist_id"),
-            GetString(el, "name") ?? "", GetString(el, "description"), GetBool(el, "complete"), GetDate(el, "due_date"),
-            FirstUserId(el, "users"), GetInt(el, "priority")));
+            GetString(el, "name") ?? "", GetString(el, "description"), GetBool(el, "complete"),
+            GetDate(el, "due_date"), GetDate(el, "start_date"), GetDate(el, "completed_on"),
+            GetInt(el, "priority"), GetInt(el, "seq"), GetString(el, "code"),
+            AllUserIds(el, "users")));
     }
 
-    // Paymo task 'users' is an array of assigned user ids; take the first as primary assignee.
-    private static long? FirstUserId(JsonElement el, string prop)
+    public async Task<IReadOnlyList<PaymoSubtask>> GetSubtasksAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
     {
+        var root = await GetJsonAsync(apiKey, "subtasks" + WhereSuffix($"project_id={paymoProjectId}", null), ct);
+        return Parse(root, "subtasks", el => new PaymoSubtask(
+            GetLong(el, "id"), GetLong(el, "task_id"), GetString(el, "name") ?? "", GetBool(el, "complete"), GetInt(el, "seq")));
+    }
+
+    // Paymo task 'users' is an array of assigned user ids.
+    private static IReadOnlyList<long> AllUserIds(JsonElement el, string prop)
+    {
+        var ids = new List<long>();
         if (el.TryGetProperty(prop, out var arr) && arr.ValueKind == JsonValueKind.Array)
             foreach (var item in arr.EnumerateArray())
-                if (item.ValueKind == JsonValueKind.Number && item.TryGetInt64(out var id)) return id;
-        return null;
+                if (item.ValueKind == JsonValueKind.Number && item.TryGetInt64(out var id)) ids.Add(id);
+        return ids;
     }
 
     public async Task<IReadOnlyList<PaymoTimeEntry>> GetTimeEntriesAsync(string apiKey, long paymoProjectId, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
@@ -84,8 +124,7 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
             var endTime = GetDate(el, "end_time");
 
             // A running timer (no end_time, no duration) — skip; nothing meaningful to import.
-            if (endTime is null && startTime is null && duration <= 0) continue;
-            if (endTime is null && duration <= 0 && startTime is not null) continue; // running
+            if (endTime is null && duration <= 0) continue;
 
             DateTime start, end;
             if (startTime is not null)
@@ -106,7 +145,7 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
                 GetLong(el, "id"), GetLong(el, "project_id"), GetNullableLong(el, "task_id"),
                 GetNullableLong(el, "user_id"),
                 start, end, duration, GetString(el, "description"),
-                GetBool(el, "billed")));   // Paymo entries expose 'billed', not 'billable'
+                GetBool(el, "billable"), GetBool(el, "billed")));   // real billable flag + invoiced flag
         }
         return list;
     }
@@ -180,6 +219,7 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
     private static long GetLong(JsonElement el, string p) => el.TryGetProperty(p, out var v) && v.TryGetInt64(out var n) ? n : 0;
     private static long? GetNullableLong(JsonElement el, string p) => el.TryGetProperty(p, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n) ? n : null;
     private static int GetInt(JsonElement el, string p) => el.TryGetProperty(p, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n) ? n : 0;
+    private static decimal? GetNullableDecimal(JsonElement el, string p) => el.TryGetProperty(p, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDecimal(out var n) ? n : null;
     private static string? GetString(JsonElement el, string p) => el.TryGetProperty(p, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
     private static bool GetBool(JsonElement el, string p)

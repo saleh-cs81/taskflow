@@ -50,6 +50,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
 
     public DbSet<Client> Clients => Set<Client>();
+    public DbSet<ClientContact> ClientContacts => Set<ClientContact>();
+    public DbSet<TaskAssignee> TaskAssignees => Set<TaskAssignee>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<Discussion> Discussions => Set<Discussion>();
     public DbSet<DiscussionPost> DiscussionPosts => Set<DiscussionPost>();
@@ -144,7 +146,29 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             b.Property(x => x.ContactEmail).HasMaxLength(256);
             b.Property(x => x.Phone).HasMaxLength(40);
             b.Property(x => x.Notes).HasMaxLength(2000);
+            b.Property(x => x.Address).HasMaxLength(300);
+            b.Property(x => x.City).HasMaxLength(100);
+            b.Property(x => x.Country).HasMaxLength(100);
+            b.Property(x => x.Website).HasMaxLength(200);
             b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+        modelBuilder.Entity<ClientContact>(b =>
+        {
+            b.ToTable("ClientContacts");
+            b.Property(x => x.Name).HasMaxLength(150).IsRequired();
+            b.Property(x => x.Email).HasMaxLength(256);
+            b.Property(x => x.Phone).HasMaxLength(40);
+            b.Property(x => x.Position).HasMaxLength(100);
+            b.HasOne(x => x.Client).WithMany(c => c.Contacts)
+                .HasForeignKey(x => x.ClientId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+        modelBuilder.Entity<TaskAssignee>(b =>
+        {
+            b.ToTable("TaskAssignees");
+            b.HasKey(x => new { x.TaskId, x.UserId });
+            b.HasOne(x => x.Task).WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
         });
         modelBuilder.Entity<Department>(b =>
         {

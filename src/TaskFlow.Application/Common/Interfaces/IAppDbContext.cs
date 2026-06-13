@@ -48,6 +48,8 @@ public interface IAppDbContext
     DbSet<Subscription> Subscriptions { get; }
 
     DbSet<Client> Clients { get; }
+    DbSet<ClientContact> ClientContacts { get; }
+    DbSet<TaskAssignee> TaskAssignees { get; }
     DbSet<Department> Departments { get; }
     DbSet<Discussion> Discussions { get; }
     DbSet<DiscussionPost> DiscussionPosts { get; }
