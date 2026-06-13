@@ -189,6 +189,49 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
         catch (Exception ex) { logger.LogWarning(ex, "Paymo file {Id} download failed", paymoFileId); return null; }
     }
 
+    public async Task<IReadOnlyList<PaymoExpense>> GetExpensesAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "expenses" + WhereSuffix(null, modifiedSinceUtc), ct);
+        return Parse(root, "expenses", el =>
+        {
+            // Paymo expense cost = price * quantity (quantity defaults to 1).
+            var price = GetDecimal(el, "price");
+            var qty = GetNullableDecimal(el, "quantity") ?? 1m;
+            return new PaymoExpense(
+                GetLong(el, "id"), GetNullableLong(el, "client_id"), GetNullableLong(el, "project_id"),
+                price * qty, GetString(el, "currency"), GetDate(el, "date"),
+                GetString(el, "name") ?? GetString(el, "description"));
+        });
+    }
+
+    public async Task<IReadOnlyList<PaymoInvoice>> GetInvoicesAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "invoices" + WhereSuffix(null, modifiedSinceUtc), ct);
+        return Parse(root, "invoices", el => new PaymoInvoice(
+            GetLong(el, "id"), GetString(el, "number") ?? $"INV-{GetLong(el, "id")}",
+            GetNullableLong(el, "client_id"), GetString(el, "status"), GetString(el, "currency"),
+            GetDate(el, "date"), GetDate(el, "due_date"),
+            GetDecimal(el, "subtotal"), GetDecimal(el, "tax") + GetDecimal(el, "tax2"), GetDecimal(el, "total")));
+    }
+
+    public async Task<IReadOnlyList<PaymoInvoicePayment>> GetInvoicePaymentsAsync(string apiKey, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "invoicepayments", ct);
+        return Parse(root, "invoicepayments", el => new PaymoInvoicePayment(
+            GetLong(el, "id"), GetLong(el, "invoice_id"), GetDecimal(el, "amount"),
+            GetDate(el, "date"), GetString(el, "notes")));
+    }
+
+    public async Task<IReadOnlyList<PaymoEstimate>> GetEstimatesAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "estimates" + WhereSuffix(null, modifiedSinceUtc), ct);
+        return Parse(root, "estimates", el => new PaymoEstimate(
+            GetLong(el, "id"), GetString(el, "number") ?? $"EST-{GetLong(el, "id")}",
+            GetNullableLong(el, "client_id"), GetString(el, "status"), GetString(el, "currency"),
+            GetDate(el, "date"), GetDate(el, "due_date") ?? GetDate(el, "expiry_date"),
+            GetDecimal(el, "subtotal"), GetDecimal(el, "tax") + GetDecimal(el, "tax2"), GetDecimal(el, "total")));
+    }
+
     // --- where-clause builder (URL-encoded value; optional incremental filter) ---
 
     private static string WhereSuffix(string? filter, DateTime? modifiedSinceUtc)
@@ -259,6 +302,7 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
     private static long? GetNullableLong(JsonElement el, string p) => el.TryGetProperty(p, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n) ? n : null;
     private static int GetInt(JsonElement el, string p) => el.TryGetProperty(p, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n) ? n : 0;
     private static decimal? GetNullableDecimal(JsonElement el, string p) => el.TryGetProperty(p, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDecimal(out var n) ? n : null;
+    private static decimal GetDecimal(JsonElement el, string p) => GetNullableDecimal(el, p) ?? 0m;
     private static string? GetString(JsonElement el, string p) => el.TryGetProperty(p, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
     private static bool GetBool(JsonElement el, string p)

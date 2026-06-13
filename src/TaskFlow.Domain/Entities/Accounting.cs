@@ -63,6 +63,16 @@ public class EstimateLineItem : TenantEntity
     public Estimate Estimate { get; set; } = null!;
 }
 
+public class InvoicePayment : TenantEntity
+{
+    public long InvoiceId { get; set; }
+    public decimal Amount { get; set; }
+    public DateTime Date { get; set; }
+    public string? Notes { get; set; }
+
+    public Invoice Invoice { get; set; } = null!;
+}
+
 public class Expense : TenantEntity
 {
     public long? ProjectId { get; set; }

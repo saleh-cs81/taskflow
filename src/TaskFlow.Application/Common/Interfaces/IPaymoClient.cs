@@ -20,6 +20,10 @@ public record PaymoSubtask(long Id, long TaskId, string Name, bool Complete, int
 public record PaymoDiscussion(long Id, long ProjectId, string Name, string? Description, long? ThreadId, long? UserId);
 public record PaymoComment(long Id, long? ThreadId, string Content, long? UserId, DateTime? CreatedOn);
 public record PaymoFile(long Id, string FileName, long? ProjectId, long? TaskId, long? DiscussionId, long? CommentId, long Size, string? Mime);
+public record PaymoExpense(long Id, long? ClientId, long? ProjectId, decimal Amount, string? Currency, DateTime? Date, string? Notes);
+public record PaymoInvoice(long Id, string Number, long? ClientId, string? Status, string? Currency, DateTime? Date, DateTime? DueDate, decimal Subtotal, decimal TaxAmount, decimal Total);
+public record PaymoInvoicePayment(long Id, long InvoiceId, decimal Amount, DateTime? Date, string? Notes);
+public record PaymoEstimate(long Id, string Number, long? ClientId, string? Status, string? Currency, DateTime? Date, DateTime? ExpiryDate, decimal Subtotal, decimal TaxAmount, decimal Total);
 // UserId = Paymo 'user_id' (who logged the time); Billable = real 'billable' flag; Billed = invoiced.
 public record PaymoTimeEntry(
     long Id, long ProjectId, long? TaskId, long? UserId, DateTime Start, DateTime End,
@@ -43,4 +47,8 @@ public interface IPaymoClient
     Task<IReadOnlyList<PaymoFile>> GetFilesAsync(string apiKey, CancellationToken ct = default);
     // Downloads a file's binary content. Returns null if unavailable.
     Task<(byte[] Bytes, string ContentType)?> GetFileBytesAsync(string apiKey, long paymoFileId, CancellationToken ct = default);
+    Task<IReadOnlyList<PaymoExpense>> GetExpensesAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default);
+    Task<IReadOnlyList<PaymoInvoice>> GetInvoicesAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default);
+    Task<IReadOnlyList<PaymoInvoicePayment>> GetInvoicePaymentsAsync(string apiKey, CancellationToken ct = default);
+    Task<IReadOnlyList<PaymoEstimate>> GetEstimatesAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default);
 }

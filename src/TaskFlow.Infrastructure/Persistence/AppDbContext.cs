@@ -58,6 +58,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
 
     public DbSet<Invoice> Invoices => Set<Invoice>();
     public DbSet<InvoiceLineItem> InvoiceLineItems => Set<InvoiceLineItem>();
+    public DbSet<InvoicePayment> InvoicePayments => Set<InvoicePayment>();
     public DbSet<Estimate> Estimates => Set<Estimate>();
     public DbSet<EstimateLineItem> EstimateLineItems => Set<EstimateLineItem>();
     public DbSet<Expense> Expenses => Set<Expense>();
@@ -211,6 +212,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             foreach (var p in new[] { "Quantity", "UnitPrice", "LineTotal" })
                 b.Property(p).HasPrecision(18, 2);
             b.HasOne(x => x.Invoice).WithMany(i => i.Items).HasForeignKey(x => x.InvoiceId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+        modelBuilder.Entity<InvoicePayment>(b =>
+        {
+            b.ToTable("InvoicePayments");
+            b.Property(x => x.Amount).HasPrecision(18, 2);
+            b.Property(x => x.Notes).HasMaxLength(500);
+            b.HasOne(x => x.Invoice).WithMany().HasForeignKey(x => x.InvoiceId).OnDelete(DeleteBehavior.Cascade);
             b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
         });
         modelBuilder.Entity<Estimate>(b =>

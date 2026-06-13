@@ -56,6 +56,7 @@ public interface IAppDbContext
 
     DbSet<Invoice> Invoices { get; }
     DbSet<InvoiceLineItem> InvoiceLineItems { get; }
+    DbSet<InvoicePayment> InvoicePayments { get; }
     DbSet<Estimate> Estimates { get; }
     DbSet<EstimateLineItem> EstimateLineItems { get; }
     DbSet<Expense> Expenses { get; }

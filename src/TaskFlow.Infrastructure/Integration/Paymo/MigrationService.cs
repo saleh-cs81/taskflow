@@ -163,6 +163,10 @@ public class MigrationService(
             await ImportFilesAsync(job, apiKey, ctx, ct);
             await db.SaveChangesAsync(ct);
 
+            // 7) Financials (global): expenses, invoices, invoice payments, estimates.
+            await ImportFinancialsAsync(job, apiKey, clientMap, ctx, since, ct);
+            await db.SaveChangesAsync(ct);
+
             job.TotalRecords = job.ProcessedRecords + job.ErrorCount;
             job.Status = job.ErrorCount > 0 ? MigrationJobStatus.CompletedWithErrors : MigrationJobStatus.Completed;
             job.Message = $"Imported {job.ProcessedRecords} records across {job.ProjectsDone} projects ({job.ErrorCount} errors).";
@@ -326,6 +330,76 @@ public class MigrationService(
             catch (Exception ex) { await RecordError(job, "File", f.Id, ex, f, ct); }
         }
         job.Message = $"Imported files… {job.ProcessedRecords} records";
+        await db.SaveChangesAsync(ct);
+    }
+
+    // Financials are tenant-global in Paymo (not per-project): expenses, invoices, payments, estimates.
+    private async Task ImportFinancialsAsync(MigrationJob job, string apiKey,
+        IReadOnlyDictionary<long, long> clientMap, ImportContext ctx, DateTime? since, CancellationToken ct)
+    {
+        // Expenses (linked to a client and/or project when those were imported).
+        try
+        {
+            foreach (var x in await paymo.GetExpensesAsync(apiKey, since, ct))
+            {
+                try
+                {
+                    long? localClient = x.ClientId is { } cid && clientMap.TryGetValue(cid, out var lc) ? lc : null;
+                    long? localProject = x.ProjectId is { } pid && ctx.ProjectByPaymo.TryGetValue(pid, out var lp) ? lp : null;
+                    await UpsertExpenseAsync(x, localClient, localProject, ct);
+                    job.ProcessedRecords++;
+                }
+                catch (Exception ex) { await RecordError(job, "Expense", x.Id, ex, x, ct); }
+            }
+        }
+        catch (Exception ex) { await RecordError(job, "Expense", 0, ex, "expenses", ct); }
+
+        // Invoices (anchor for payments below).
+        var invoiceByPaymo = new Dictionary<long, long>();
+        try
+        {
+            foreach (var inv in await paymo.GetInvoicesAsync(apiKey, since, ct))
+            {
+                try
+                {
+                    long? localClient = inv.ClientId is { } cid && clientMap.TryGetValue(cid, out var lc) ? lc : null;
+                    invoiceByPaymo[inv.Id] = await UpsertInvoiceAsync(inv, localClient, ct);
+                    job.ProcessedRecords++;
+                }
+                catch (Exception ex) { await RecordError(job, "Invoice", inv.Id, ex, inv, ct); }
+            }
+        }
+        catch (Exception ex) { await RecordError(job, "Invoice", 0, ex, "invoices", ct); }
+
+        // Invoice payments (anchored to imported invoices).
+        try
+        {
+            foreach (var pay in await paymo.GetInvoicePaymentsAsync(apiKey, ct))
+            {
+                if (!invoiceByPaymo.TryGetValue(pay.InvoiceId, out var localInvoice)) continue;
+                try { await UpsertInvoicePaymentAsync(pay, localInvoice, ct); job.ProcessedRecords++; }
+                catch (Exception ex) { await RecordError(job, "InvoicePayment", pay.Id, ex, pay, ct); }
+            }
+        }
+        catch (Exception ex) { await RecordError(job, "InvoicePayment", 0, ex, "invoicepayments", ct); }
+
+        // Estimates.
+        try
+        {
+            foreach (var est in await paymo.GetEstimatesAsync(apiKey, since, ct))
+            {
+                try
+                {
+                    long? localClient = est.ClientId is { } cid && clientMap.TryGetValue(cid, out var lc) ? lc : null;
+                    await UpsertEstimateAsync(est, localClient, ct);
+                    job.ProcessedRecords++;
+                }
+                catch (Exception ex) { await RecordError(job, "Estimate", est.Id, ex, est, ct); }
+            }
+        }
+        catch (Exception ex) { await RecordError(job, "Estimate", 0, ex, "estimates", ct); }
+
+        job.Message = $"Imported financials… {job.ProcessedRecords} records";
         await db.SaveChangesAsync(ct);
     }
 
@@ -660,6 +734,130 @@ public class MigrationService(
         await AddMappingAsync("TimeEntry", e.Id, created.Id, ct);
     }
 
+    private async Task UpsertExpenseAsync(PaymoExpense x, long? localClientId, long? localProjectId, CancellationToken ct)
+    {
+        var existing = await FindMappingAsync("Expense", x.Id, ct);
+        if (existing is not null)
+        {
+            var row = await db.Expenses.FirstOrDefaultAsync(e => e.Id == existing.LocalId, ct);
+            if (row is not null)
+            {
+                row.ClientId = localClientId; row.ProjectId = localProjectId; row.Amount = x.Amount;
+                row.Currency = string.IsNullOrWhiteSpace(x.Currency) ? "USD" : x.Currency!;
+                row.Date = x.Date ?? row.Date; row.Description = x.Notes;
+            }
+            existing.LastSyncedUtc = clock.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+        var created = new Expense
+        {
+            ClientId = localClientId, ProjectId = localProjectId, Amount = x.Amount,
+            Currency = string.IsNullOrWhiteSpace(x.Currency) ? "USD" : x.Currency!,
+            Date = x.Date ?? clock.UtcNow, Category = "Imported", Description = x.Notes
+        };
+        db.Expenses.Add(created);
+        await db.SaveChangesAsync(ct);
+        await AddMappingAsync("Expense", x.Id, created.Id, ct);
+    }
+
+    private async Task<long> UpsertInvoiceAsync(PaymoInvoice inv, long? localClientId, CancellationToken ct)
+    {
+        var status = MapInvoiceStatus(inv.Status);
+        var existing = await FindMappingAsync("Invoice", inv.Id, ct);
+        if (existing is not null)
+        {
+            var row = await db.Invoices.FirstOrDefaultAsync(i => i.Id == existing.LocalId, ct);
+            if (row is not null) ApplyInvoice(row, inv, localClientId, status);
+            existing.LastSyncedUtc = clock.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return existing.LocalId;
+        }
+        var created = new Invoice();
+        ApplyInvoice(created, inv, localClientId, status);
+        db.Invoices.Add(created);
+        await db.SaveChangesAsync(ct);
+        await AddMappingAsync("Invoice", inv.Id, created.Id, ct);
+        return created.Id;
+    }
+
+    private void ApplyInvoice(Invoice row, PaymoInvoice inv, long? localClientId, InvoiceStatus status)
+    {
+        row.Number = inv.Number; row.ClientId = localClientId; row.Status = status;
+        row.IssueDate = inv.Date ?? clock.UtcNow; row.DueDate = inv.DueDate;
+        row.Currency = string.IsNullOrWhiteSpace(inv.Currency) ? "USD" : inv.Currency!;
+        row.Subtotal = inv.Subtotal; row.TaxAmount = inv.TaxAmount; row.Total = inv.Total;
+        row.TaxRate = inv.Subtotal > 0 ? Math.Round(inv.TaxAmount / inv.Subtotal * 100m, 2) : 0m;
+    }
+
+    private async Task UpsertInvoicePaymentAsync(PaymoInvoicePayment pay, long localInvoiceId, CancellationToken ct)
+    {
+        var existing = await FindMappingAsync("InvoicePayment", pay.Id, ct);
+        if (existing is not null)
+        {
+            var row = await db.InvoicePayments.FirstOrDefaultAsync(p => p.Id == existing.LocalId, ct);
+            if (row is not null) { row.Amount = pay.Amount; row.Date = pay.Date ?? row.Date; row.Notes = pay.Notes; }
+            existing.LastSyncedUtc = clock.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+        var created = new InvoicePayment
+        {
+            InvoiceId = localInvoiceId, Amount = pay.Amount, Date = pay.Date ?? clock.UtcNow, Notes = pay.Notes
+        };
+        db.InvoicePayments.Add(created);
+        await db.SaveChangesAsync(ct);
+        await AddMappingAsync("InvoicePayment", pay.Id, created.Id, ct);
+    }
+
+    private async Task UpsertEstimateAsync(PaymoEstimate est, long? localClientId, CancellationToken ct)
+    {
+        var status = MapEstimateStatus(est.Status);
+        var existing = await FindMappingAsync("Estimate", est.Id, ct);
+        if (existing is not null)
+        {
+            var row = await db.Estimates.FirstOrDefaultAsync(e => e.Id == existing.LocalId, ct);
+            if (row is not null) ApplyEstimate(row, est, localClientId, status);
+            existing.LastSyncedUtc = clock.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+        var created = new Estimate();
+        ApplyEstimate(created, est, localClientId, status);
+        db.Estimates.Add(created);
+        await db.SaveChangesAsync(ct);
+        await AddMappingAsync("Estimate", est.Id, created.Id, ct);
+    }
+
+    private void ApplyEstimate(Estimate row, PaymoEstimate est, long? localClientId, EstimateStatus status)
+    {
+        row.Number = est.Number; row.ClientId = localClientId; row.Status = status;
+        row.IssueDate = est.Date ?? clock.UtcNow; row.ExpiryDate = est.ExpiryDate;
+        row.Currency = string.IsNullOrWhiteSpace(est.Currency) ? "USD" : est.Currency!;
+        row.Subtotal = est.Subtotal; row.TaxAmount = est.TaxAmount; row.Total = est.Total;
+        row.TaxRate = est.Subtotal > 0 ? Math.Round(est.TaxAmount / est.Subtotal * 100m, 2) : 0m;
+    }
+
+    private static InvoiceStatus MapInvoiceStatus(string? s)
+    {
+        var t = (s ?? "").ToLowerInvariant();
+        if (t.Contains("paid")) return InvoiceStatus.Paid;
+        if (t.Contains("overdue")) return InvoiceStatus.Overdue;
+        if (t.Contains("void") || t.Contains("cancel")) return InvoiceStatus.Cancelled;
+        if (t.Contains("sent") || t.Contains("view") || t.Contains("invoiced")) return InvoiceStatus.Sent;
+        return InvoiceStatus.Draft;
+    }
+
+    private static EstimateStatus MapEstimateStatus(string? s)
+    {
+        var t = (s ?? "").ToLowerInvariant();
+        if (t.Contains("accept") || t.Contains("approv")) return EstimateStatus.Accepted;
+        if (t.Contains("reject") || t.Contains("declin")) return EstimateStatus.Rejected;
+        if (t.Contains("expir")) return EstimateStatus.Expired;
+        if (t.Contains("sent") || t.Contains("view")) return EstimateStatus.Sent;
+        return EstimateStatus.Draft;
+    }
+
     // Paymo priority is 100/75/50/25 (higher = more important).
     private static TaskPriority MapPriority(int p) => p switch
     {
@@ -685,6 +883,10 @@ public class MigrationService(
         var commentIds = Ids("Comment");
         var discPostIds = Ids("DiscussionPost");
         var discIds = Ids("Discussion");
+        var paymentIds = Ids("InvoicePayment");
+        var expenseIds = Ids("Expense");
+        var invoiceIds = Ids("Invoice");
+        var estimateIds = Ids("Estimate");
         var taskIds = Ids("Task");
         var listIds = Ids("TaskList");
         var milestoneIds = Ids("Milestone");
@@ -692,6 +894,21 @@ public class MigrationService(
         var contactIds = Ids("ClientContact");
         var clientIds = Ids("Client");
         var userIds = Ids("User");
+
+        // Financials (payments → invoice line items → invoices; estimate line items → estimates; expenses).
+        if (paymentIds.Length > 0) await db.InvoicePayments.IgnoreQueryFilters().Where(x => paymentIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
+        if (expenseIds.Length > 0) await db.Expenses.IgnoreQueryFilters().Where(x => expenseIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
+        if (invoiceIds.Length > 0)
+        {
+            await db.InvoiceLineItems.IgnoreQueryFilters().Where(x => invoiceIds.Contains(x.InvoiceId)).ExecuteDeleteAsync(ct);
+            await db.InvoicePayments.IgnoreQueryFilters().Where(x => invoiceIds.Contains(x.InvoiceId)).ExecuteDeleteAsync(ct);
+            await db.Invoices.IgnoreQueryFilters().Where(x => invoiceIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
+        }
+        if (estimateIds.Length > 0)
+        {
+            await db.EstimateLineItems.IgnoreQueryFilters().Where(x => estimateIds.Contains(x.EstimateId)).ExecuteDeleteAsync(ct);
+            await db.Estimates.IgnoreQueryFilters().Where(x => estimateIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
+        }
 
         if (fileIds.Length > 0) await db.Files.IgnoreQueryFilters().Where(x => fileIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
         if (entryIds.Length > 0) await db.TimeEntries.IgnoreQueryFilters().Where(x => entryIds.Contains(x.Id)).ExecuteDeleteAsync(ct);

@@ -86,6 +86,29 @@ public class PaymoSandboxClient : IPaymoClient
         new(4003, 1002, 3004, 5002, DateTime.UtcNow.AddDays(-1), DateTime.UtcNow.AddDays(-1).AddHours(4), 4 * 3600, "Auth flow", false, false),
     ];
 
+    private static readonly PaymoExpense[] Expenses =
+    [
+        new(4501, 6001, 1001, 250.00m, "USD", DateTime.UtcNow.AddDays(-10), "Stock photography"),
+        new(4502, 6002, 1002, 99.00m, "USD", DateTime.UtcNow.AddDays(-5), "App Store fee"),
+    ];
+
+    private static readonly PaymoInvoice[] Invoices =
+    [
+        new(4601, "INV-1001", 6001, "sent", "USD", DateTime.UtcNow.AddDays(-7), DateTime.UtcNow.AddDays(7), 1000.00m, 160.00m, 1160.00m),
+        new(4602, "INV-1002", 6002, "paid", "USD", DateTime.UtcNow.AddDays(-20), DateTime.UtcNow.AddDays(-6), 2000.00m, 0m, 2000.00m),
+    ];
+
+    private static readonly PaymoInvoicePayment[] InvoicePayments =
+    [
+        new(4701, 4602, 2000.00m, DateTime.UtcNow.AddDays(-6), "Bank transfer"),
+        new(4702, 4601, 500.00m, DateTime.UtcNow.AddDays(-2), "Partial payment"),
+    ];
+
+    private static readonly PaymoEstimate[] Estimates =
+    [
+        new(4801, "EST-1001", 6001, "draft", "USD", DateTime.UtcNow.AddDays(-3), DateTime.UtcNow.AddDays(27), 3000.00m, 480.00m, 3480.00m),
+    ];
+
     public Task<bool> ValidateKeyAsync(string apiKey, CancellationToken ct = default)
         => Task.FromResult(!string.IsNullOrWhiteSpace(apiKey));
 
@@ -133,4 +156,16 @@ public class PaymoSandboxClient : IPaymoClient
 
     public Task<(byte[] Bytes, string ContentType)?> GetFileBytesAsync(string apiKey, long paymoFileId, CancellationToken ct = default)
         => Task.FromResult<(byte[], string)?>((System.Text.Encoding.UTF8.GetBytes($"sandbox file {paymoFileId}"), "application/octet-stream"));
+
+    public Task<IReadOnlyList<PaymoExpense>> GetExpensesAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoExpense>>(Expenses);
+
+    public Task<IReadOnlyList<PaymoInvoice>> GetInvoicesAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoInvoice>>(Invoices);
+
+    public Task<IReadOnlyList<PaymoInvoicePayment>> GetInvoicePaymentsAsync(string apiKey, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoInvoicePayment>>(InvoicePayments);
+
+    public Task<IReadOnlyList<PaymoEstimate>> GetEstimatesAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoEstimate>>(Estimates);
 }
