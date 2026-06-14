@@ -1180,6 +1180,11 @@ public class MigrationService(
     {
         if (projects.Count == 0) return;
         var existing = await db.MigrationProjectItems.ToDictionaryAsync(i => i.PaymoProjectId, ct);
+        // Carry over projects already fully imported by a prior (pre-staging) run, so the new batched
+        // flow marks them done instead of re-importing (and re-hitting Paymo's rate limit).
+        var doneMap = await db.EntityMappings.AsNoTracking()
+            .Where(m => m.EntityType == "ProjectDone")
+            .ToDictionaryAsync(m => m.PaymoId, m => m.LocalId, ct);
         var seq = 0;
         foreach (var p in projects)
         {
@@ -1191,9 +1196,13 @@ public class MigrationService(
             }
             else
             {
+                var carriedOver = doneMap.TryGetValue(p.Id, out var localId);
                 db.MigrationProjectItems.Add(new MigrationProjectItem
                 {
-                    PaymoProjectId = p.Id, Name = p.Name, Seq = seq, Status = MigrationProjectStatus.Pending
+                    PaymoProjectId = p.Id, Name = p.Name, Seq = seq,
+                    Status = carriedOver ? MigrationProjectStatus.Imported : MigrationProjectStatus.Pending,
+                    LocalProjectId = carriedOver ? localId : null,
+                    ImportedAtUtc = carriedOver ? clock.UtcNow : null
                 });
             }
         }
