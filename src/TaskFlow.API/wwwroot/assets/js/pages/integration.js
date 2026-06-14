@@ -18,6 +18,8 @@
   const batchSize = document.getElementById('batchSize');
   const migrateBatchBtn = document.getElementById('migrateBatchBtn');
   const refreshCatalogBtn = document.getElementById('refreshCatalogBtn');
+  const migrateUsersBtn = document.getElementById('migrateUsersBtn');
+  const stopBtn = document.getElementById('stopBtn');
 
   const RUNNING = s => s === 0 || s === 1; // Pending or Running
   let pollTimer = null;
@@ -39,10 +41,14 @@
       (cat.failed ? ` · <span class="text-danger">${cat.failed} ${I18N.t('intg.ps.failed').toLowerCase()}</span>` : '') +
       (cat.pending ? ` · ${cat.pending} ${I18N.t('intg.ps.pending').toLowerCase()}` : '');
     if (!cat.items.length) {
-      catalogBody.innerHTML = `<tr><td colspan="6" class="text-muted small py-3">${I18N.t('intg.noProjects')}</td></tr>`;
+      catalogBody.innerHTML = `<tr><td colspan="7" class="text-muted small py-3">${I18N.t('intg.noProjects')}</td></tr>`;
       return;
     }
-    catalogBody.innerHTML = cat.items.map((p, i) => `
+    catalogBody.innerHTML = cat.items.map((p, i) => {
+      let action = '';
+      if (p.status === 0) action = `<button class="btn btn-primary btn-sm py-0 mig-one" data-id="${p.paymoProjectId}">${I18N.t('intg.migrate')}</button>`;
+      else if (p.status === 3) action = `<button class="btn btn-outline-warning btn-sm py-0 mig-one" data-id="${p.paymoProjectId}">${I18N.t('intg.retry')}</button>`;
+      return `
       <tr>
         <td class="text-muted small">${i + 1}</td>
         <td>${escapeHtml(p.name)}</td>
@@ -50,7 +56,11 @@
         <td>${p.status === 2 ? p.recordCount : ''}</td>
         <td class="small text-muted">${p.importedAtUtc ? new Date(p.importedAtUtc).toLocaleString(I18N.lang) : ''}</td>
         <td class="small text-danger">${p.errorMessage ? escapeHtml(p.errorMessage) : ''}</td>
-      </tr>`).join('');
+        <td class="text-end">${action}</td>
+      </tr>`; }).join('');
+    // wire per-row migrate buttons; keep them disabled if a run is in progress (stop button enabled == running)
+    const running = stopBtn && !stopBtn.disabled;
+    catalogBody.querySelectorAll('.mig-one').forEach(b => { b.onclick = () => migrateProject(b.dataset.id); b.disabled = running; });
   }
 
   function escapeHtml(s) { return (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -84,6 +94,9 @@
   function setRunning(isRunning) {
     runFull.disabled = isRunning; runSync.disabled = isRunning; resetBtn.disabled = isRunning;
     if (migrateBatchBtn) migrateBatchBtn.disabled = isRunning;
+    if (migrateUsersBtn) migrateUsersBtn.disabled = isRunning;
+    if (stopBtn) stopBtn.disabled = !isRunning;   // Stop only enabled while a run is active
+    document.querySelectorAll('.mig-one').forEach(b => b.disabled = isRunning);
   }
 
   function renderProgress(job) {
@@ -140,16 +153,27 @@
   runFull.onclick = () => run('migrate');
   runSync.onclick = () => run('sync');
 
-  migrateBatchBtn.onclick = async () => {
-    const n = Math.max(1, parseInt(batchSize.value, 10) || 10);
-    runMsg.innerHTML = `<div class="alert alert-info py-1">${I18N.t('intg.queued')}<br><small class="text-muted">${I18N.t('intg.resumeHint')}</small></div>`;
+  async function startRun(endpoint) {
+    runMsg.innerHTML = `<div class="alert alert-info py-1">${I18N.t('intg.queued')}</div>`;
     try {
-      const res = await API.post(`/integrations/paymo/migrate-batch?count=${n}`);
+      const res = await API.post(endpoint);
       setRunning(true);
       startPolling(res.jobId);
     } catch (ex) {
       runMsg.innerHTML = `<div class="alert alert-danger py-1">${ex.problem?.title || I18N.t('common.error')}</div>`;
     }
+  }
+  function migrateProject(paymoId) { return startRun(`/integrations/paymo/migrate-project/${paymoId}`); }
+
+  migrateBatchBtn.onclick = () => {
+    const n = Math.max(1, parseInt(batchSize.value, 10) || 10);
+    return startRun(`/integrations/paymo/migrate-batch?count=${n}`);
+  };
+  migrateUsersBtn.onclick = () => startRun('/integrations/paymo/migrate-users');
+  stopBtn.onclick = async () => {
+    stopBtn.disabled = true;
+    try { await API.post('/integrations/paymo/stop'); runMsg.innerHTML = `<div class="alert alert-warning py-1">${I18N.t('intg.stopping')}</div>`; }
+    catch (ex) { runMsg.innerHTML = `<div class="alert alert-danger py-1">${ex.problem?.title || I18N.t('common.error')}</div>`; }
   };
   refreshCatalogBtn.onclick = () => loadCatalog();
 

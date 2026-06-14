@@ -195,6 +195,9 @@ public class PaymoSandboxClient : IPaymoClient
     public Task<IReadOnlyList<PaymoUserTask>> GetUserTasksAsync(string apiKey, long paymoUserId, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<PaymoUserTask>>(UserTasks.Where(u => u.UserId == paymoUserId).ToList());
 
+    public Task<IReadOnlyList<PaymoUserTask>> GetUserTasksByTaskAsync(string apiKey, long paymoTaskId, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoUserTask>>(UserTasks.Where(u => u.TaskId == paymoTaskId).ToList());
+
     public Task<IReadOnlyList<PaymoBooking>> GetBookingsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<PaymoBooking>>(Bookings.Where(b => b.ProjectId == paymoProjectId).ToList());
 }

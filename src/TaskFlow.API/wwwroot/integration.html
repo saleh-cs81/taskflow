@@ -70,7 +70,19 @@
       </div>
     </div>
 
-    <!-- Staged (batched) migration -->
+    <!-- Step 1: base data (users) -->
+    <div class="card shadow-sm mt-4">
+      <div class="card-body d-flex flex-wrap align-items-center gap-2">
+        <div class="me-auto">
+          <h5 class="mb-0" data-i18n="intg.usersTitle"></h5>
+          <span class="small text-muted" data-i18n="intg.usersHint"></span>
+        </div>
+        <button class="btn btn-primary" id="migrateUsersBtn" data-i18n="intg.migrateUsers"></button>
+        <button class="btn btn-outline-danger" id="stopBtn" data-i18n="intg.stop"></button>
+      </div>
+    </div>
+
+    <!-- Step 2: per-project staging -->
     <div class="card shadow-sm mt-4" id="stagingCard">
       <div class="card-body">
         <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
@@ -78,12 +90,13 @@
           <span class="small" id="catalogSummary"></span>
         </div>
         <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+          <button class="btn btn-outline-secondary btn-sm" id="refreshCatalogBtn" data-i18n="intg.refreshList"></button>
+          <span class="text-muted small mx-1" data-i18n="intg.orBatch"></span>
           <div>
             <label class="form-label small mb-0" data-i18n="intg.perBatch"></label>
-            <input type="number" id="batchSize" class="form-control form-control-sm" style="width:110px" value="10" min="1">
+            <input type="number" id="batchSize" class="form-control form-control-sm" style="width:90px" value="10" min="1">
           </div>
-          <button class="btn btn-primary btn-sm" id="migrateBatchBtn" data-i18n="intg.migrateBatch"></button>
-          <button class="btn btn-outline-secondary btn-sm" id="refreshCatalogBtn" data-i18n="intg.refreshList"></button>
+          <button class="btn btn-outline-primary btn-sm" id="migrateBatchBtn" data-i18n="intg.migrateBatch"></button>
           <span class="small text-muted" id="batchHint" data-i18n="intg.batchHint"></span>
         </div>
         <div class="table-responsive" style="max-height:460px;overflow:auto">
@@ -95,6 +108,7 @@
               <th data-i18n="intg.records"></th>
               <th data-i18n="intg.imported"></th>
               <th data-i18n="intg.note"></th>
+              <th></th>
             </tr></thead>
             <tbody id="catalogBody"></tbody>
           </table>

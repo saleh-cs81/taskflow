@@ -61,6 +61,15 @@ public interface IMigrationService : IMigrationExecutor
     // Staged migration: import only the next `count` not-yet-imported projects (count <= 0 => all remaining).
     Task<StartMigrationResult> StartBatchAsync(int count, CancellationToken ct = default);
 
+    // Migrate base/shared data only (users, clients, contacts, statuses, client-level financials).
+    Task<StartMigrationResult> StartUsersAsync(CancellationToken ct = default);
+
+    // Migrate one specific project, fully (self-contained).
+    Task<StartMigrationResult> StartProjectAsync(long paymoProjectId, CancellationToken ct = default);
+
+    // Request a graceful stop of the running migration.
+    Task StopAsync(CancellationToken ct = default);
+
     // The per-project staging catalog (which projects are imported / pending / failed).
     Task<MigrationCatalogDto> GetProjectItemsAsync(CancellationToken ct = default);
 

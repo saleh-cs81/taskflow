@@ -23,6 +23,9 @@ public class MigrationJob : TenantEntity
     public int ProjectsDone { get; set; }
     // When set, this run imports only the next N not-yet-imported projects (staged migration). null = all.
     public int? BatchSize { get; set; }
+    public MigrationMode Mode { get; set; } = MigrationMode.Full;
+    public long? TargetPaymoProjectId { get; set; }   // for Mode=Project: the single project to import
+    public bool CancelRequested { get; set; }          // set by Stop; checked between units of work
     public DateTime? StartedUtc { get; set; }
     public DateTime? FinishedUtc { get; set; }
     public string? Message { get; set; }

@@ -251,6 +251,13 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
             GetLong(el, "id"), GetLong(el, "user_id"), GetLong(el, "task_id")));
     }
 
+    public async Task<IReadOnlyList<PaymoUserTask>> GetUserTasksByTaskAsync(string apiKey, long paymoTaskId, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "userstasks" + WhereSuffix($"task_id={paymoTaskId}", null), ct);
+        return Parse(root, "userstasks", el => new PaymoUserTask(
+            GetLong(el, "id"), GetLong(el, "user_id"), GetLong(el, "task_id")));
+    }
+
     public async Task<IReadOnlyList<PaymoBooking>> GetBookingsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
     {
         var root = await GetJsonAsync(apiKey, "bookings" + WhereSuffix($"project_id={paymoProjectId}", null), ct);

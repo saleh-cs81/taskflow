@@ -30,3 +30,12 @@ public enum MigrationProjectStatus
     Imported = 2,
     Failed = 3
 }
+
+// What a migration run does.
+public enum MigrationMode
+{
+    Full = 0,       // everything (legacy)
+    Batch = 1,      // next N pending projects
+    Users = 2,      // base data only: users, clients, contacts, statuses, client-level financials
+    Project = 3     // one specific project, fully (self-contained)
+}

@@ -61,5 +61,6 @@ public interface IPaymoClient
     Task<IReadOnlyList<PaymoEstimate>> GetEstimatesAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoWorkflowStatus>> GetWorkflowStatusesAsync(string apiKey, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoUserTask>> GetUserTasksAsync(string apiKey, long paymoUserId, CancellationToken ct = default);
+    Task<IReadOnlyList<PaymoUserTask>> GetUserTasksByTaskAsync(string apiKey, long paymoTaskId, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoBooking>> GetBookingsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default);
 }

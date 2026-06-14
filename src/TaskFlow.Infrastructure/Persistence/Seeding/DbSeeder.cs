@@ -54,7 +54,7 @@ public static class DbSeeder
                        .Select(u => (long?)u.Id).FirstOrDefaultAsync(ct);
             if (userId is not { } uid) continue;   // no user to attribute the run to
             resumedTenants.Add(job.TenantId);
-            queue.Enqueue(new MigrationWorkItem(job.Id, job.TenantId, uid, job.Type, job.BatchSize));
+            queue.Enqueue(new MigrationWorkItem(job.Id, job.TenantId, uid, job.Type, job.BatchSize, job.Mode, job.TargetPaymoProjectId));
         }
         await db.SaveChangesAsync(ct);
     }

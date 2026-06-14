@@ -33,6 +33,24 @@ public class IntegrationController(IMigrationService migration) : ControllerBase
     public async Task<ActionResult<StartMigrationResult>> MigrateBatch([FromQuery] int count = 10, CancellationToken ct = default)
         => Ok(await migration.StartBatchAsync(count, ct));
 
+    // Migrate base/shared data only (users, clients, statuses, client financials).
+    [HttpPost("migrate-users")]
+    public async Task<ActionResult<StartMigrationResult>> MigrateUsers(CancellationToken ct)
+        => Ok(await migration.StartUsersAsync(ct));
+
+    // Migrate one specific project, fully.
+    [HttpPost("migrate-project/{paymoProjectId:long}")]
+    public async Task<ActionResult<StartMigrationResult>> MigrateProject(long paymoProjectId, CancellationToken ct)
+        => Ok(await migration.StartProjectAsync(paymoProjectId, ct));
+
+    // Request a graceful stop of the running migration.
+    [HttpPost("stop")]
+    public async Task<IActionResult> Stop(CancellationToken ct)
+    {
+        await migration.StopAsync(ct);
+        return NoContent();
+    }
+
     // Per-project staging catalog: which projects are imported / pending / failed.
     [HttpGet("projects")]
     public async Task<ActionResult<MigrationCatalogDto>> Projects(CancellationToken ct)
