@@ -274,6 +274,9 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
 
     // --- HTTP plumbing with retry ---
 
+    private const long MaxResponseBytes = 60_000_000;   // skip absurd un-paginated payloads instead of OOM/hang
+    private const int ParseDeadlineSeconds = 120;       // hard cap on read+parse so a giant body can't wedge the worker
+
     private async Task<JsonElement> GetJsonAsync(string apiKey, string path, CancellationToken ct)
     {
         using var res = await SendAsync(apiKey, path, ct);
@@ -285,8 +288,17 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
             if (body.Length > 300) body = body[..300];
             throw new HttpRequestException($"Paymo GET {path} returned {(int)res.StatusCode} {res.ReasonPhrase}. {body}".Trim());
         }
-        var stream = await res.Content.ReadAsStreamAsync(ct);
-        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        // Bail on a server-declared oversize body before we try to buffer/parse it.
+        if (res.Content.Headers.ContentLength is { } len && len > MaxResponseBytes)
+            throw new InvalidOperationException($"Paymo GET {path} response too large ({len} bytes) — skipped to protect the import.");
+
+        // Hard deadline on the read+parse: JsonDocument.ParseAsync isn't otherwise time-bounded, so a
+        // pathologically large/slow payload could hang the worker indefinitely. On timeout this throws
+        // (OperationCanceledException) and the caller records an error + skips just this resource.
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(ParseDeadlineSeconds));
+        var stream = await res.Content.ReadAsStreamAsync(cts.Token);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cts.Token);
         return doc.RootElement.Clone();
     }
 

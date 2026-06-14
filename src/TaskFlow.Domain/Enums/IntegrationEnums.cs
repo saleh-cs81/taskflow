@@ -21,3 +21,12 @@ public enum MigrationJobStatus
     CompletedWithErrors = 3,
     Failed = 4
 }
+
+// Per-project migration state, shown on the staging page.
+public enum MigrationProjectStatus
+{
+    Pending = 0,
+    Importing = 1,
+    Imported = 2,
+    Failed = 3
+}

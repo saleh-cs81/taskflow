@@ -41,6 +41,7 @@ public interface IAppDbContext
     DbSet<MigrationJob> MigrationJobs { get; }
     DbSet<EntityMapping> EntityMappings { get; }
     DbSet<MigrationError> MigrationErrors { get; }
+    DbSet<MigrationProjectItem> MigrationProjectItems { get; }
 
     DbSet<RecurringTaskRule> RecurringTaskRules { get; }
 

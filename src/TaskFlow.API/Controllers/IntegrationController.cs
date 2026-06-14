@@ -28,6 +28,16 @@ public class IntegrationController(IMigrationService migration) : ControllerBase
     public async Task<ActionResult<StartMigrationResult>> Sync(CancellationToken ct)
         => Ok(await migration.StartAsync(MigrationJobType.Incremental, ct));
 
+    // Staged migration: import only the next `count` not-yet-imported projects (count <= 0 => all remaining).
+    [HttpPost("migrate-batch")]
+    public async Task<ActionResult<StartMigrationResult>> MigrateBatch([FromQuery] int count = 10, CancellationToken ct = default)
+        => Ok(await migration.StartBatchAsync(count, ct));
+
+    // Per-project staging catalog: which projects are imported / pending / failed.
+    [HttpGet("projects")]
+    public async Task<ActionResult<MigrationCatalogDto>> Projects(CancellationToken ct)
+        => Ok(await migration.GetProjectItemsAsync(ct));
+
     // Clears imported data so the migration can be re-run from a clean slate.
     [HttpPost("reset")]
     public async Task<IActionResult> Reset(CancellationToken ct)

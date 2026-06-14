@@ -69,6 +69,38 @@
         </div>
       </div>
     </div>
+
+    <!-- Staged (batched) migration -->
+    <div class="card shadow-sm mt-4" id="stagingCard">
+      <div class="card-body">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+          <h5 class="mb-0 me-auto" data-i18n="intg.stagingTitle"></h5>
+          <span class="small" id="catalogSummary"></span>
+        </div>
+        <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+          <div>
+            <label class="form-label small mb-0" data-i18n="intg.perBatch"></label>
+            <input type="number" id="batchSize" class="form-control form-control-sm" style="width:110px" value="10" min="1">
+          </div>
+          <button class="btn btn-primary btn-sm" id="migrateBatchBtn" data-i18n="intg.migrateBatch"></button>
+          <button class="btn btn-outline-secondary btn-sm" id="refreshCatalogBtn" data-i18n="intg.refreshList"></button>
+          <span class="small text-muted" id="batchHint" data-i18n="intg.batchHint"></span>
+        </div>
+        <div class="table-responsive" style="max-height:460px;overflow:auto">
+          <table class="table table-sm align-middle">
+            <thead class="sticky-top" style="background:var(--bs-body-bg)"><tr>
+              <th style="width:42px">#</th>
+              <th data-i18n="intg.project"></th>
+              <th data-i18n="intg.status"></th>
+              <th data-i18n="intg.records"></th>
+              <th data-i18n="intg.imported"></th>
+              <th data-i18n="intg.note"></th>
+            </tr></thead>
+            <tbody id="catalogBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>

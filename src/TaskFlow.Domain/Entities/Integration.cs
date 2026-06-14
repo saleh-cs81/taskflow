@@ -21,9 +21,25 @@ public class MigrationJob : TenantEntity
     // Outer-loop progress so the UI can render a percentage while running.
     public int ProjectsTotal { get; set; }
     public int ProjectsDone { get; set; }
+    // When set, this run imports only the next N not-yet-imported projects (staged migration). null = all.
+    public int? BatchSize { get; set; }
     public DateTime? StartedUtc { get; set; }
     public DateTime? FinishedUtc { get; set; }
     public string? Message { get; set; }
+}
+
+// Catalog of every Paymo project + its per-project migration status. Drives the staging page
+// (which projects are imported vs pending/failed) and batched migration (pick the next N pending).
+public class MigrationProjectItem : TenantEntity
+{
+    public long PaymoProjectId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public int Seq { get; set; }                       // order from Paymo's project list
+    public MigrationProjectStatus Status { get; set; } = MigrationProjectStatus.Pending;
+    public long? LocalProjectId { get; set; }
+    public int RecordCount { get; set; }               // records imported for this project (tasks, time, etc.)
+    public string? ErrorMessage { get; set; }
+    public DateTime? ImportedAtUtc { get; set; }
 }
 
 // Maps a Paymo record to its local counterpart. Backbone of idempotency,

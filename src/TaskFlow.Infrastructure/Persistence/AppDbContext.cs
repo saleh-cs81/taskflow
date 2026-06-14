@@ -43,6 +43,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<MigrationJob> MigrationJobs => Set<MigrationJob>();
     public DbSet<EntityMapping> EntityMappings => Set<EntityMapping>();
     public DbSet<MigrationError> MigrationErrors => Set<MigrationError>();
+    public DbSet<MigrationProjectItem> MigrationProjectItems => Set<MigrationProjectItem>();
 
     public DbSet<RecurringTaskRule> RecurringTaskRules => Set<RecurringTaskRule>();
 
@@ -112,6 +113,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         modelBuilder.Entity<MigrationJob>().HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
         modelBuilder.Entity<EntityMapping>().HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
         modelBuilder.Entity<MigrationError>().HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        modelBuilder.Entity<MigrationProjectItem>(b =>
+        {
+            b.ToTable("MigrationProjectItems");
+            b.Property(x => x.Name).HasMaxLength(300);
+            b.Property(x => x.ErrorMessage).HasMaxLength(1000);
+            b.HasIndex(x => new { x.TenantId, x.PaymoProjectId }).IsUnique();
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
 
         modelBuilder.Entity<RecurringTaskRule>(b =>
         {

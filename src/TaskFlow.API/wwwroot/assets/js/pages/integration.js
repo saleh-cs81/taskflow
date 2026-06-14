@@ -13,9 +13,47 @@
   const runFull = document.getElementById('runFull');
   const runSync = document.getElementById('runSync');
   const resetBtn = document.getElementById('resetBtn');
+  const catalogBody = document.getElementById('catalogBody');
+  const catalogSummary = document.getElementById('catalogSummary');
+  const batchSize = document.getElementById('batchSize');
+  const migrateBatchBtn = document.getElementById('migrateBatchBtn');
+  const refreshCatalogBtn = document.getElementById('refreshCatalogBtn');
 
   const RUNNING = s => s === 0 || s === 1; // Pending or Running
   let pollTimer = null;
+
+  // Per-project migration status (MigrationProjectStatus): 0 Pending, 1 Importing, 2 Imported, 3 Failed.
+  function projStatusBadge(s) {
+    const map = { 0: ['secondary', I18N.t('intg.ps.pending')], 1: ['info', I18N.t('intg.ps.importing')],
+                  2: ['success', I18N.t('intg.ps.imported')], 3: ['danger', I18N.t('intg.ps.failed')] };
+    const [c, t] = map[s] || ['secondary', '?'];
+    return `<span class="badge bg-${c}">${t}</span>`;
+  }
+
+  async function loadCatalog() {
+    let cat;
+    try { cat = await API.get('/integrations/paymo/projects'); }
+    catch { return; }
+    catalogSummary.innerHTML =
+      `<span class="text-success fw-semibold">${cat.imported}</span> / ${cat.total} ${I18N.t('intg.imported').toLowerCase()}` +
+      (cat.failed ? ` · <span class="text-danger">${cat.failed} ${I18N.t('intg.ps.failed').toLowerCase()}</span>` : '') +
+      (cat.pending ? ` · ${cat.pending} ${I18N.t('intg.ps.pending').toLowerCase()}` : '');
+    if (!cat.items.length) {
+      catalogBody.innerHTML = `<tr><td colspan="6" class="text-muted small py-3">${I18N.t('intg.noProjects')}</td></tr>`;
+      return;
+    }
+    catalogBody.innerHTML = cat.items.map((p, i) => `
+      <tr>
+        <td class="text-muted small">${i + 1}</td>
+        <td>${escapeHtml(p.name)}</td>
+        <td>${projStatusBadge(p.status)}</td>
+        <td>${p.status === 2 ? p.recordCount : ''}</td>
+        <td class="small text-muted">${p.importedAtUtc ? new Date(p.importedAtUtc).toLocaleString(I18N.lang) : ''}</td>
+        <td class="small text-danger">${p.errorMessage ? escapeHtml(p.errorMessage) : ''}</td>
+      </tr>`).join('');
+  }
+
+  function escapeHtml(s) { return (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
   async function loadStatus() {
     const s = await API.get('/integrations/paymo/status');
@@ -45,6 +83,7 @@
 
   function setRunning(isRunning) {
     runFull.disabled = isRunning; runSync.disabled = isRunning; resetBtn.disabled = isRunning;
+    if (migrateBatchBtn) migrateBatchBtn.disabled = isRunning;
   }
 
   function renderProgress(job) {
@@ -72,6 +111,7 @@
         const job = await API.get(`/integrations/paymo/jobs/${jobId}`);
         renderProgress(job);
         await loadJobs();
+        await loadCatalog();
         if (!RUNNING(job.status)) { clearInterval(pollTimer); await loadStatus(); }
       } catch { clearInterval(pollTimer); }
     }, 1500);
@@ -100,19 +140,33 @@
   runFull.onclick = () => run('migrate');
   runSync.onclick = () => run('sync');
 
+  migrateBatchBtn.onclick = async () => {
+    const n = Math.max(1, parseInt(batchSize.value, 10) || 10);
+    runMsg.innerHTML = `<div class="alert alert-info py-1">${I18N.t('intg.queued')}<br><small class="text-muted">${I18N.t('intg.resumeHint')}</small></div>`;
+    try {
+      const res = await API.post(`/integrations/paymo/migrate-batch?count=${n}`);
+      setRunning(true);
+      startPolling(res.jobId);
+    } catch (ex) {
+      runMsg.innerHTML = `<div class="alert alert-danger py-1">${ex.problem?.title || I18N.t('common.error')}</div>`;
+    }
+  };
+  refreshCatalogBtn.onclick = () => loadCatalog();
+
   resetBtn.onclick = async () => {
     if (!confirm(I18N.t('intg.resetConfirm'))) return;
     try {
       await API.post('/integrations/paymo/reset');
       runMsg.innerHTML = `<div class="alert alert-success py-1">${I18N.t('intg.resetDone')}</div>`;
       wrap.classList.add('d-none');
-      await loadStatus(); await loadJobs();
+      await loadStatus(); await loadJobs(); await loadCatalog();
     } catch (ex) { runMsg.innerHTML = `<div class="alert alert-danger py-1">${ex.problem?.title || I18N.t('common.error')}</div>`; }
   };
 
   document.addEventListener('lang-changed', () => location.reload());
   await loadStatus();
   await loadJobs();
+  await loadCatalog();
 
   // If a job is already running (e.g. page reloaded mid-import), resume polling it.
   try {
