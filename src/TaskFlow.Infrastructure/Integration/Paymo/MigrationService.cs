@@ -87,6 +87,10 @@ public class MigrationService(
         job.Status = MigrationJobStatus.Running;
         job.StartedUtc = clock.UtcNow;
         job.Message = "Starting…";
+        // Counters are recomputed each run, so reset them on (re)start to keep progress accurate on resume.
+        job.ProcessedRecords = 0;
+        job.ProjectsDone = 0;
+        job.ErrorCount = 0;
         await db.SaveChangesAsync(ct);
 
         try
@@ -144,6 +148,9 @@ public class MigrationService(
             // maps so comments/files (fetched globally) can be anchored afterwards.
             var ctx = new ImportContext(userMap);
             foreach (var kv in wfStatuses) ctx.WorkflowStatus[kv.Key] = kv.Value;
+            // Resume support: rebuild cross-project maps from prior runs so done work can be skipped
+            // and global passes (comments/files/bookings) still anchor correctly.
+            await RehydrateContextAsync(ctx, ct);
             var projects = await SafeFetchAsync(job, "Project", 0, () => paymo.GetProjectsAsync(apiKey, since, ct), ct);
             job.ProjectsTotal = projects.Count;
             await db.SaveChangesAsync(ct);
@@ -158,6 +165,14 @@ public class MigrationService(
 
             foreach (var p in projects)
             {
+                // Resume fast-path: a fully-imported project is skipped without re-fetching from Paymo.
+                if (await FindMappingAsync("ProjectDone", p.Id, ct) is not null)
+                {
+                    job.ProjectsDone++;
+                    if (job.ProjectsDone % 25 == 0) { job.Message = $"Resuming… {job.ProjectsDone}/{job.ProjectsTotal} projects"; await db.SaveChangesAsync(ct); }
+                    continue;
+                }
+
                 long localProjectId;
                 try { localProjectId = await UpsertProjectAsync(p, clientMap, statusMap, ct); job.ProcessedRecords++; }
                 catch (Exception ex) { await RecordError(job, "Project", p.Id, ex, p, ct); job.ProjectsDone++; await db.SaveChangesAsync(ct); continue; }
@@ -165,8 +180,10 @@ public class MigrationService(
                 ctx.ProjectByPaymo[p.Id] = localProjectId;
                 var projMilestones = milestonesByProject.TryGetValue(p.Id, out var ms) ? ms : (IReadOnlyList<PaymoMilestone>)[];
                 // Never let one project's failure abort the whole run — record it and move on.
+                var childrenOk = true;
                 try { await ImportProjectChildren(job, apiKey, p.Id, localProjectId, since, ctx, projMilestones, ct); }
-                catch (Exception ex) { await RecordError(job, "ProjectChildren", p.Id, ex, p, ct); }
+                catch (Exception ex) { await RecordError(job, "ProjectChildren", p.Id, ex, p, ct); childrenOk = false; }
+                if (childrenOk) await EnsureMappingAsync("ProjectDone", p.Id, localProjectId, ct);   // mark for resume skip
 
                 job.ProjectsDone++;
                 job.Message = $"Imported {job.ProjectsDone}/{job.ProjectsTotal} projects · {job.ProcessedRecords} records";
@@ -258,7 +275,7 @@ public class MigrationService(
                 var assignees = t.AssigneeUserIds.Where(userMap.ContainsKey).Select(a => userMap[a]).ToList();
                 var localTaskId = await UpsertTaskAsync(t, localProjectId, localList, localMilestone, assignees, ctx.WorkflowStatus, ct);
                 ctx.TaskByPaymo[t.Id] = localTaskId;
-                if (t.ThreadId is { } th) ctx.ThreadToTask[th] = localTaskId;
+                if (t.ThreadId is { } th) { ctx.ThreadToTask[th] = localTaskId; await EnsureMappingAsync("TaskThread", th, localTaskId, ct); }
                 job.ProcessedRecords++;
             }
             catch (Exception ex) { await RecordError(job, "Task", t.Id, ex, t, ct); }
@@ -272,7 +289,7 @@ public class MigrationService(
                 long dAuthor = d.UserId is { } du && userMap.TryGetValue(du, out var dl) ? dl : _runUserId;
                 var localDisc = await UpsertDiscussionAsync(d, localProjectId, dAuthor, ct);
                 ctx.DiscussionByPaymo[d.Id] = localDisc;
-                if (d.ThreadId is { } th) ctx.ThreadToDiscussion[th] = localDisc;
+                if (d.ThreadId is { } th) { ctx.ThreadToDiscussion[th] = localDisc; await EnsureMappingAsync("DiscThread", th, localDisc, ct); }
                 job.ProcessedRecords++;
             }
             catch (Exception ex) { await RecordError(job, "Discussion", d.Id, ex, d, ct); }
@@ -309,9 +326,10 @@ public class MigrationService(
     // Paymo requires a mandatory thread_id filter, so fetch per imported thread (deduped across task+discussion threads).
     private async Task ImportCommentsAsync(MigrationJob job, string apiKey, ImportContext ctx, CancellationToken ct)
     {
-        var threadIds = ctx.ThreadToTask.Keys.Concat(ctx.ThreadToDiscussion.Keys).Distinct();
+        var threadIds = ctx.ThreadToTask.Keys.Concat(ctx.ThreadToDiscussion.Keys).Distinct().ToList();
         foreach (var threadId in threadIds)
         {
+            if (await FindMappingAsync("ThreadDone", threadId, ct) is not null) continue;   // resume skip
             foreach (var c in await SafeFetchAsync(job, "Comment", threadId, () => paymo.GetCommentsAsync(apiKey, threadId, ct), ct))
             {
                 try
@@ -332,6 +350,7 @@ public class MigrationService(
                 }
                 catch (Exception ex) { await RecordError(job, "Comment", c.Id, ex, c, ct); }
             }
+            await EnsureMappingAsync("ThreadDone", threadId, threadId, ct);   // mark thread for resume skip
         }
         job.Message = $"Imported comments… {job.ProcessedRecords} records";
         await db.SaveChangesAsync(ct);
@@ -342,6 +361,7 @@ public class MigrationService(
     {
         foreach (var (paymoProjectId, _) in ctx.ProjectByPaymo)
         {
+            if (await FindMappingAsync("ProjFilesDone", paymoProjectId, ct) is not null) continue;   // resume skip
             foreach (var f in await SafeFetchAsync(job, "File", paymoProjectId, () => paymo.GetFilesAsync(apiKey, paymoProjectId, ct), ct))
             {
                 try
@@ -359,6 +379,7 @@ public class MigrationService(
                 }
                 catch (Exception ex) { await RecordError(job, "File", f.Id, ex, f, ct); }
             }
+            await EnsureMappingAsync("ProjFilesDone", paymoProjectId, paymoProjectId, ct);   // mark project's files for resume skip
         }
         job.Message = $"Imported files… {job.ProcessedRecords} records";
         await db.SaveChangesAsync(ct);
@@ -452,6 +473,7 @@ public class MigrationService(
 
         foreach (var (paymoProjectId, localProjectId) in ctx.ProjectByPaymo)
         {
+            if (await FindMappingAsync("ProjBookingsDone", paymoProjectId, ct) is not null) continue;   // resume skip
             IReadOnlyList<PaymoBooking> bookings;
             try { bookings = await paymo.GetBookingsAsync(apiKey, paymoProjectId, ct); }
             catch (Exception ex) { await RecordError(job, "Booking", paymoProjectId, ex, "bookings", ct); continue; }
@@ -478,6 +500,7 @@ public class MigrationService(
                 }
                 catch (Exception ex) { await RecordError(job, "Booking", bk.Id, ex, bk, ct); }
             }
+            await EnsureMappingAsync("ProjBookingsDone", paymoProjectId, paymoProjectId, ct);   // mark for resume skip
         }
         job.Message = $"Imported bookings… {job.ProcessedRecords} records";
         await db.SaveChangesAsync(ct);
@@ -1070,6 +1093,36 @@ public class MigrationService(
     {
         db.EntityMappings.Add(new EntityMapping { EntityType = entityType, PaymoId = paymoId, LocalId = localId, LastSyncedUtc = clock.UtcNow });
         await db.SaveChangesAsync(ct);
+    }
+
+    // Idempotent mapping insert (used for resume markers + thread links that may be re-touched).
+    private async Task EnsureMappingAsync(string entityType, long paymoId, long localId, CancellationToken ct)
+    {
+        if (await FindMappingAsync(entityType, paymoId, ct) is not null) return;
+        await AddMappingAsync(entityType, paymoId, localId, ct);
+    }
+
+    // Rebuild the in-memory cross-project maps from persisted EntityMappings so a resumed run can
+    // skip completed work AND still anchor global passes (comments/files/bookings) correctly.
+    private async Task RehydrateContextAsync(ImportContext ctx, CancellationToken ct)
+    {
+        var maps = await db.EntityMappings.AsNoTracking()
+            .Where(m => m.EntityType == "Project" || m.EntityType == "Task" || m.EntityType == "Discussion"
+                     || m.EntityType == "Comment" || m.EntityType == "TaskThread" || m.EntityType == "DiscThread")
+            .Select(m => new { m.EntityType, m.PaymoId, m.LocalId })
+            .ToListAsync(ct);
+        foreach (var m in maps)
+        {
+            switch (m.EntityType)
+            {
+                case "Project": ctx.ProjectByPaymo[m.PaymoId] = m.LocalId; break;
+                case "Task": ctx.TaskByPaymo[m.PaymoId] = m.LocalId; break;
+                case "Discussion": ctx.DiscussionByPaymo[m.PaymoId] = m.LocalId; break;
+                case "Comment": ctx.CommentByPaymo[m.PaymoId] = m.LocalId; break;
+                case "TaskThread": ctx.ThreadToTask[m.PaymoId] = m.LocalId; break;
+                case "DiscThread": ctx.ThreadToDiscussion[m.PaymoId] = m.LocalId; break;
+            }
+        }
     }
 
     private async Task RecordError(MigrationJob job, string entityType, long paymoId, Exception ex, object payload, CancellationToken ct)

@@ -290,11 +290,50 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
         return doc.RootElement.Clone();
     }
 
+    // --- Adaptive rate limiting (driven by Paymo's X-Ratelimit-* headers) ---
+    private const int MaxAttempts = 12;             // ride through throttling rather than failing fast
+    private const int MaxBackoffSeconds = 120;      // cap any single wait so the import can never freeze indefinitely
+    private const int BaseThrottleMs = 80;          // gentle spacing between calls
+    private int _rlRemaining = int.MaxValue;        // requests left in the current window (from last response)
+    private int _rlDecaySeconds = 60;               // window length (from last response)
+
+    // Wait just enough to stay under the limit: pause for the window reset when we're about to run out.
+    private async Task PaceAsync(CancellationToken ct)
+    {
+        if (_rlRemaining <= 2)
+        {
+            var wait = Math.Clamp(_rlDecaySeconds, 1, MaxBackoffSeconds);
+            logger.LogInformation("Paymo rate budget low ({Remaining} left); pausing {Wait}s for window reset", _rlRemaining, wait);
+            await Task.Delay(TimeSpan.FromSeconds(wait), ct);
+            _rlRemaining = int.MaxValue;            // assume the window rolled over
+        }
+        else if (BaseThrottleMs > 0)
+        {
+            await Task.Delay(BaseThrottleMs, ct);
+        }
+    }
+
+    private void ApplyRateHeaders(HttpResponseMessage res)
+    {
+        if (TryGetIntHeader(res, "X-Ratelimit-Remaining", out var rem)) _rlRemaining = rem;
+        if (TryGetIntHeader(res, "X-Ratelimit-Decay-Period", out var decay) && decay > 0) _rlDecaySeconds = decay;
+    }
+
+    private static bool TryGetIntHeader(HttpResponseMessage res, string name, out int value)
+    {
+        value = 0;
+        if (!res.Headers.TryGetValues(name, out var vals)) return false;
+        foreach (var v in vals) if (int.TryParse(v, out value)) return true;
+        return false;
+    }
+
     private async Task<HttpResponseMessage> SendAsync(string apiKey, string path, CancellationToken ct)
     {
         var delayMs = 500;
         for (var attempt = 1; ; attempt++)
         {
+            await PaceAsync(ct);   // proactively stay under the rate limit
+
             var request = new HttpRequestMessage(HttpMethod.Get, BaseUrl + path);
             var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{apiKey}:x"));
             request.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
@@ -303,23 +342,25 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
             try
             {
                 var res = await http.SendAsync(request, ct);
-                if (!IsTransient(res.StatusCode) || attempt >= 4) return res;
+                ApplyRateHeaders(res);                                  // learn remaining budget + window length
+                if (!IsTransient(res.StatusCode) || attempt >= MaxAttempts) return res;
 
-                // Honor Retry-After on 429; otherwise exponential backoff.
+                // Honor Retry-After on 429; otherwise exponential backoff. Cap so a huge value can't freeze us.
                 var wait = res.Headers.RetryAfter?.Delta
                     ?? (res.Headers.RetryAfter?.Date is { } d ? (TimeSpan?)(d - DateTimeOffset.UtcNow) : null)
                     ?? TimeSpan.FromMilliseconds(delayMs);
                 if (wait < TimeSpan.Zero) wait = TimeSpan.FromMilliseconds(delayMs);
-                logger.LogWarning("Paymo {Path} returned {Status}, retry {Attempt} after {Wait}s", path, res.StatusCode, attempt, wait.TotalSeconds);
+                if (wait > TimeSpan.FromSeconds(MaxBackoffSeconds)) wait = TimeSpan.FromSeconds(MaxBackoffSeconds);
+                logger.LogWarning("Paymo {Path} returned {Status}, retry {Attempt}/{Max} after {Wait}s", path, res.StatusCode, attempt, MaxAttempts, wait.TotalSeconds);
                 res.Dispose();
                 await Task.Delay(wait, ct);
             }
-            catch (HttpRequestException ex) when (attempt < 4)
+            catch (HttpRequestException ex) when (attempt < MaxAttempts)
             {
                 logger.LogWarning(ex, "Paymo {Path} network error, retry {Attempt}", path, attempt);
-                await Task.Delay(delayMs, ct);
+                await Task.Delay(Math.Min(delayMs, MaxBackoffSeconds * 1000), ct);
             }
-            delayMs *= 2;
+            delayMs = Math.Min(delayMs * 2, MaxBackoffSeconds * 1000);
         }
     }
 
