@@ -288,23 +288,36 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
             if (body.Length > 300) body = body[..300];
             throw new HttpRequestException($"Paymo GET {path} returned {(int)res.StatusCode} {res.ReasonPhrase}. {body}".Trim());
         }
-        // Bail on a server-declared oversize body before we try to buffer/parse it.
+        // Bail on a server-declared oversize body before reading it.
         if (res.Content.Headers.ContentLength is { } len && len > MaxResponseBytes)
             throw new InvalidOperationException($"Paymo GET {path} response too large ({len} bytes) — skipped to protect the import.");
 
-        // Hard deadline on the read+parse: JsonDocument.ParseAsync isn't otherwise time-bounded, so a
-        // pathologically large/slow payload could hang the worker indefinitely. On timeout this throws
-        // (OperationCanceledException) and the caller records an error + skips just this resource.
+        // Stream the body with a hard size cap AND time deadline, THEN parse the bounded buffer.
+        // Critical: JsonDocument parsing of a buffered body is synchronous and ignores cancellation,
+        // so a giant un-paginated response (Paymo never paginates) would wedge the worker for minutes
+        // during the parse. Aborting the read at the cap prevents ever parsing a monster payload.
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(ParseDeadlineSeconds));
-        var stream = await res.Content.ReadAsStreamAsync(cts.Token);
-        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cts.Token);
+        await using var stream = await res.Content.ReadAsStreamAsync(cts.Token);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        long total = 0;
+        int read;
+        while ((read = await stream.ReadAsync(chunk, cts.Token)) > 0)
+        {
+            total += read;
+            if (total > MaxResponseBytes)
+                throw new InvalidOperationException($"Paymo GET {path} response exceeded {MaxResponseBytes / 1_000_000}MB — skipped to protect the import (project likely has an enormous un-paginated dataset).");
+            buffer.Write(chunk, 0, read);
+        }
+        buffer.Position = 0;
+        using var doc = JsonDocument.Parse(buffer);
         return doc.RootElement.Clone();
     }
 
     // --- Adaptive rate limiting (driven by Paymo's X-Ratelimit-* headers) ---
-    private const int MaxAttempts = 12;             // ride through throttling rather than failing fast
-    private const int MaxBackoffSeconds = 120;      // cap any single wait so the import can never freeze indefinitely
+    private const int MaxAttempts = 4;              // bounded retries — a stuck resource fails fast and gets recorded
+    private const int MaxBackoffSeconds = 20;       // cap any single wait so the import can never freeze for long
     private const int BaseThrottleMs = 80;          // gentle spacing between calls
     private int _rlRemaining = int.MaxValue;        // requests left in the current window (from last response)
     private int _rlDecaySeconds = 60;               // window length (from last response)
@@ -353,7 +366,9 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
 
             try
             {
-                var res = await http.SendAsync(request, ct);
+                // ResponseHeadersRead: don't pre-buffer the body, so GetJsonAsync can abort an oversized
+                // download at the size cap instead of waiting for the whole monster payload to arrive.
+                var res = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
                 ApplyRateHeaders(res);                                  // learn remaining budget + window length
                 if (!IsTransient(res.StatusCode) || attempt >= MaxAttempts) return res;
 

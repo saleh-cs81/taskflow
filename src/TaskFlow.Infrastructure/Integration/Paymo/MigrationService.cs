@@ -183,8 +183,9 @@ public class MigrationService(
             job.ProjectsDone = allItems.Count(i => i.Status == MigrationProjectStatus.Imported);
             await db.SaveChangesAsync(ct);
 
-            // This run's batch: the next N not-yet-imported projects (Pending/Failed), or all if no batch size.
-            var pendingItems = allItems.Where(i => i.Status != MigrationProjectStatus.Imported).ToList();
+            // This run's batch: the next N Pending projects, or all pending if no batch size.
+            // Failed projects are skipped so one bad project never blocks the queue (retry them explicitly).
+            var pendingItems = allItems.Where(i => i.Status == MigrationProjectStatus.Pending).ToList();
             var batch = item.BatchSize is { } n && n > 0 ? pendingItems.Take(n).ToList() : pendingItems;
             job.Message = batch.Count == 0 ? "Nothing pending — already imported." : $"Migrating {batch.Count} project(s)…";
             await db.SaveChangesAsync(ct);
@@ -207,18 +208,29 @@ public class MigrationService(
                 await db.SaveChangesAsync(ct);
 
                 var before = job.ProcessedRecords;
+                var errBefore = job.ErrorCount;
                 try
                 {
                     var localProjectId = await UpsertProjectAsync(p, clientMap, statusMap, ct); job.ProcessedRecords++;
                     ctx.ProjectByPaymo[p.Id] = localProjectId;
                     var projMilestones = milestonesByProject.TryGetValue(p.Id, out var ms) ? ms : (IReadOnlyList<PaymoMilestone>)[];
                     await ImportProjectChildren(job, apiKey, p.Id, localProjectId, since, ctx, projMilestones, ct);
-                    pItem.Status = MigrationProjectStatus.Imported;
                     pItem.LocalProjectId = localProjectId;
                     pItem.RecordCount = job.ProcessedRecords - before;
-                    pItem.ErrorMessage = null;
-                    pItem.ImportedAtUtc = clock.UtcNow;
-                    job.ProjectsDone++;
+                    if (job.ErrorCount > errBefore)
+                    {
+                        // A resource failed to import (recorded in MigrationErrors) — flag the project so it's
+                        // skipped by future auto-batches and visible for an explicit retry; don't block the queue.
+                        pItem.Status = MigrationProjectStatus.Failed;
+                        pItem.ErrorMessage = "One or more resources failed to import — see job errors for details.";
+                    }
+                    else
+                    {
+                        pItem.Status = MigrationProjectStatus.Imported;
+                        pItem.ErrorMessage = null;
+                        pItem.ImportedAtUtc = clock.UtcNow;
+                        job.ProjectsDone++;
+                    }
                 }
                 catch (Exception ex)
                 {
