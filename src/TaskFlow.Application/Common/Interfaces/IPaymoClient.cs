@@ -48,6 +48,7 @@ public interface IPaymoClient
     Task<IReadOnlyList<PaymoMilestone>> GetMilestonesAsync(string apiKey, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoTask>> GetTasksAsync(string apiKey, long paymoProjectId, DateTime? modifiedSinceUtc = null, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoSubtask>> GetSubtasksAsync(string apiKey, CancellationToken ct = default);
+    Task<IReadOnlyList<PaymoSubtask>> GetSubtasksByTaskAsync(string apiKey, long paymoTaskId, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoTimeEntry>> GetTimeEntriesAsync(string apiKey, long paymoProjectId, DateTime? modifiedSinceUtc = null, CancellationToken ct = default);
     Task<IReadOnlyList<PaymoDiscussion>> GetDiscussionsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default);
     // Comments require a mandatory thread_id filter; files require a mandatory project_id (or task/discussion) filter.

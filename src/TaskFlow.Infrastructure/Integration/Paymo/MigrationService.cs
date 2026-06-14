@@ -176,13 +176,10 @@ public class MigrationService(
 
                 if (toImport.Count > 0)
                 {
-                    // Resources Paymo can't filter by project_id: fetch once per run, slice per project.
+                    // Milestones can't be filtered by project_id — fetch all once per run, slice per project.
                     var milestonesByProject = new Dictionary<long, List<PaymoMilestone>>();
                     foreach (var m in await SafeFetchAsync(job, "Milestone", 0, () => paymo.GetMilestonesAsync(apiKey, ct), ct))
                     { if (!milestonesByProject.TryGetValue(m.ProjectId, out var l)) { l = new(); milestonesByProject[m.ProjectId] = l; } l.Add(m); }
-                    var subtasksByTask = new Dictionary<long, List<PaymoSubtask>>();
-                    foreach (var s in await SafeFetchAsync(job, "Subtask", 0, () => paymo.GetSubtasksAsync(apiKey, ct), ct))
-                    { if (!subtasksByTask.TryGetValue(s.TaskId, out var l)) { l = new(); subtasksByTask[s.TaskId] = l; } l.Add(s); }
 
                     foreach (var pItem in toImport)
                     {
@@ -199,21 +196,15 @@ public class MigrationService(
                             var localProjectId = await UpsertProjectAsync(p, clientMap, statusMap, ct); job.ProcessedRecords++;
                             ctx.ProjectByPaymo[p.Id] = localProjectId;
                             var projMs = milestonesByProject.TryGetValue(p.Id, out var ms) ? ms : (IReadOnlyList<PaymoMilestone>)[];
-                            await ImportProjectFullAsync(job, apiKey, p, localProjectId, since, ctx, projMs, subtasksByTask, clientMap, ct);
+                            await ImportProjectFullAsync(job, apiKey, p, localProjectId, since, ctx, projMs, clientMap, ct);
                             pItem.LocalProjectId = localProjectId;
                             pItem.RecordCount = job.ProcessedRecords - before;
-                            if (job.ErrorCount > errBefore)
-                            {
-                                pItem.Status = MigrationProjectStatus.Failed;
-                                pItem.ErrorMessage = "One or more resources failed to import — see job errors for details.";
-                            }
-                            else
-                            {
-                                pItem.Status = MigrationProjectStatus.Imported;
-                                pItem.ErrorMessage = null;
-                                pItem.ImportedAtUtc = clock.UtcNow;
-                                job.ProjectsDone++;
-                            }
+                            // Imported even if a few sub-items had issues (e.g. an undownloadable file); note them.
+                            var newErrors = job.ErrorCount - errBefore;
+                            pItem.Status = MigrationProjectStatus.Imported;
+                            pItem.ErrorMessage = newErrors > 0 ? $"Imported with {newErrors} skipped item(s) — see job errors." : null;
+                            pItem.ImportedAtUtc = clock.UtcNow;
+                            job.ProjectsDone++;
                         }
                         catch (Exception ex)
                         {
@@ -307,7 +298,7 @@ public class MigrationService(
     // subtasks, discussions, time entries, comments (this project's threads only), files, bookings.
     private async Task ImportProjectFullAsync(MigrationJob job, string apiKey, PaymoProject project, long localProjectId,
         DateTime? since, ImportContext ctx, IReadOnlyList<PaymoMilestone> milestones,
-        IReadOnlyDictionary<long, List<PaymoSubtask>> subtasksByTask, IReadOnlyDictionary<long, long> clientMap, CancellationToken ct)
+        IReadOnlyDictionary<long, long> clientMap, CancellationToken ct)
     {
         var paymoProjectId = project.Id;
         var userMap = ctx.UserMap;
@@ -381,11 +372,11 @@ public class MigrationService(
             catch (Exception ex) { await RecordError(job, "TimeEntry", e.Id, ex, e, ct); }
         }
 
-        // Subtasks (this project's tasks only) -> checklist items, from the per-run subtasks cache.
+        // Subtasks -> checklist items, fetched per task (Paymo requires a task_id filter on subtasks).
         foreach (var ptid in projectTaskPaymoIds)
         {
-            if (!subtasksByTask.TryGetValue(ptid, out var subs) || !ctx.TaskByPaymo.TryGetValue(ptid, out var localTask)) continue;
-            foreach (var s in subs)
+            if (!ctx.TaskByPaymo.TryGetValue(ptid, out var localTask)) continue;
+            foreach (var s in await SafeFetchAsync(job, "Subtask", ptid, () => paymo.GetSubtasksByTaskAsync(apiKey, ptid, ct), ct))
             {
                 try { await UpsertSubtaskAsync(s, localTask, ct); job.ProcessedRecords++; }
                 catch (Exception ex) { await RecordError(job, "Subtask", s.Id, ex, s, ct); }

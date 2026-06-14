@@ -162,6 +162,9 @@ public class PaymoSandboxClient : IPaymoClient
     public Task<IReadOnlyList<PaymoSubtask>> GetSubtasksAsync(string apiKey, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<PaymoSubtask>>(Subtasks);
 
+    public Task<IReadOnlyList<PaymoSubtask>> GetSubtasksByTaskAsync(string apiKey, long paymoTaskId, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PaymoSubtask>>(Subtasks.Where(s => s.TaskId == paymoTaskId).ToList());
+
     public Task<IReadOnlyList<PaymoTimeEntry>> GetTimeEntriesAsync(string apiKey, long paymoProjectId, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<PaymoTimeEntry>>(TimeEntries.Where(t => t.ProjectId == paymoProjectId).ToList());
 

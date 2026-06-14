@@ -97,8 +97,16 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
 
     public async Task<IReadOnlyList<PaymoSubtask>> GetSubtasksAsync(string apiKey, CancellationToken ct = default)
     {
-        // Paymo only filters subtasks by task_id; fetch all and map to imported tasks client-side.
+        // NOTE: Paymo REQUIRES a where filter on subtasks (task_id or id); an unfiltered GET 400s.
+        // Prefer GetSubtasksByTaskAsync. Kept for compatibility.
         var root = await GetJsonAsync(apiKey, "subtasks", ct);
+        return Parse(root, "subtasks", el => new PaymoSubtask(
+            GetLong(el, "id"), GetLong(el, "task_id"), GetString(el, "name") ?? "", GetBool(el, "complete"), GetInt(el, "seq")));
+    }
+
+    public async Task<IReadOnlyList<PaymoSubtask>> GetSubtasksByTaskAsync(string apiKey, long paymoTaskId, CancellationToken ct = default)
+    {
+        var root = await GetJsonAsync(apiKey, "subtasks" + WhereSuffix($"task_id={paymoTaskId}", null), ct);
         return Parse(root, "subtasks", el => new PaymoSubtask(
             GetLong(el, "id"), GetLong(el, "task_id"), GetString(el, "name") ?? "", GetBool(el, "complete"), GetInt(el, "seq")));
     }
