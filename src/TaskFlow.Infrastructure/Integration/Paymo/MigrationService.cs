@@ -823,8 +823,8 @@ public class MigrationService(
         var existing = await FindMappingAsync("File", f.Id, ct);
         if (existing is not null) { existing.LastSyncedUtc = clock.UtcNow; await db.SaveChangesAsync(ct); return; }
 
-        var download = await paymo.GetFileBytesAsync(apiKey, f.Id, ct)
-            ?? throw new InvalidOperationException($"File {f.Id} could not be downloaded.");
+        var download = await paymo.GetFileBytesAsync(apiKey, f.DownloadUrl ?? "", ct)
+            ?? throw new InvalidOperationException($"File {f.Id} ({f.FileName}) could not be downloaded from {f.DownloadUrl ?? "(no url)"}.");
         using var stream = new MemoryStream(download.Bytes);
         var stored = await fileStorage.SaveAsync(stream, f.FileName, tenant.TenantId ?? 0, ct);
 

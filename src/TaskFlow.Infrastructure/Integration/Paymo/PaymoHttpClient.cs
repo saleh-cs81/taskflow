@@ -185,20 +185,25 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
             GetLong(el, "id"), GetString(el, "original_filename") ?? GetString(el, "name") ?? $"file-{GetLong(el, "id")}",
             GetNullableLong(el, "project_id"), GetNullableLong(el, "task_id"),
             GetNullableLong(el, "discussion_id"), GetNullableLong(el, "comment_id"),
-            (long)GetInt(el, "size"), GetString(el, "mime")));
+            (long)GetInt(el, "size"), GetString(el, "mime"), GetString(el, "file")));   // "file" = direct download URL
     }
 
-    public async Task<(byte[] Bytes, string ContentType)?> GetFileBytesAsync(string apiKey, long paymoFileId, CancellationToken ct = default)
+    // Paymo files are downloaded from the absolute URL in the file object's "file" field (Basic auth),
+    // NOT from an /api/files/{id}/download endpoint (which doesn't exist).
+    public async Task<(byte[] Bytes, string ContentType)?> GetFileBytesAsync(string apiKey, string downloadUrl, CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(downloadUrl)) return null;
         try
         {
-            using var res = await SendAsync(apiKey, $"files/{paymoFileId}/download", ct);
-            if (!res.IsSuccessStatusCode) return null;
+            using var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{apiKey}:x")));
+            using var res = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!res.IsSuccessStatusCode) { logger.LogWarning("Paymo file download {Url} -> {Status}", downloadUrl, (int)res.StatusCode); return null; }
             var bytes = await res.Content.ReadAsByteArrayAsync(ct);
             var contentType = res.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
             return (bytes, contentType);
         }
-        catch (Exception ex) { logger.LogWarning(ex, "Paymo file {Id} download failed", paymoFileId); return null; }
+        catch (Exception ex) { logger.LogWarning(ex, "Paymo file download {Url} failed", downloadUrl); return null; }
     }
 
     public async Task<IReadOnlyList<PaymoExpense>> GetExpensesAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)

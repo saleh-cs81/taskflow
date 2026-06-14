@@ -92,7 +92,7 @@ public class PaymoSandboxClient : IPaymoClient
 
     private static readonly PaymoFile[] Files =
     [
-        new(9401, "brief.pdf", 1001, 3001, null, null, 1234, "application/pdf"),
+        new(9401, "brief.pdf", 1001, 3001, null, null, 1234, "application/pdf", "https://sandbox.local/files/9401"),
     ];
 
     private static readonly PaymoSubtask[] Subtasks =
@@ -177,8 +177,8 @@ public class PaymoSandboxClient : IPaymoClient
     public Task<IReadOnlyList<PaymoFile>> GetFilesAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<PaymoFile>>(Files.Where(f => f.ProjectId == paymoProjectId).ToList());
 
-    public Task<(byte[] Bytes, string ContentType)?> GetFileBytesAsync(string apiKey, long paymoFileId, CancellationToken ct = default)
-        => Task.FromResult<(byte[], string)?>((System.Text.Encoding.UTF8.GetBytes($"sandbox file {paymoFileId}"), "application/octet-stream"));
+    public Task<(byte[] Bytes, string ContentType)?> GetFileBytesAsync(string apiKey, string downloadUrl, CancellationToken ct = default)
+        => Task.FromResult<(byte[], string)?>((System.Text.Encoding.UTF8.GetBytes($"sandbox file {downloadUrl}"), "application/octet-stream"));
 
     public Task<IReadOnlyList<PaymoExpense>> GetExpensesAsync(string apiKey, DateTime? modifiedSinceUtc = null, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<PaymoExpense>>(Expenses);
