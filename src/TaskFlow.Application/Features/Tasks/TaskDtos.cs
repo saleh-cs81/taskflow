@@ -28,8 +28,8 @@ public record UpdateTaskRequest(
     decimal? EstimateHours,
     bool IsBillable);
 
-// Drag & drop: move a task to a list and/or reposition.
-public record MoveTaskRequest(long? TaskListId, double Position, WorkStatus? Status);
+// Drag & drop: move a task to a list and/or reposition. ProjectId (optional) moves the task to another project.
+public record MoveTaskRequest(long? TaskListId, double Position, WorkStatus? Status, long? ProjectId = null);
 
 public record TaskDto(
     long Id,
@@ -54,7 +54,8 @@ public record TaskDto(
     int ChecklistDone,
     int SubtaskCount,
     DateTime CreatedAtUtc,
-    DateTime? UpdatedAtUtc);
+    DateTime? UpdatedAtUtc,
+    IReadOnlyList<long> AssigneeUserIds);
 
 // A task assigned to the current user, carrying its project name for the "My Day"/"My Tasks" home views.
 public record AssignedTaskDto(

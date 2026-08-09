@@ -105,6 +105,24 @@ public class TasksController(
         return NoContent();
     }
 
+    // --- Assignees (multiple) ---
+
+    [HttpPost("{id:long}/assignees/{userId:long}")]
+    [RequirePermission(Permissions.Tasks.Update)]
+    public async Task<IActionResult> AddAssignee(long id, long userId, CancellationToken ct)
+    {
+        await tasks.AddAssigneeAsync(id, userId, ct);
+        return NoContent();
+    }
+
+    [HttpDelete("{id:long}/assignees/{userId:long}")]
+    [RequirePermission(Permissions.Tasks.Update)]
+    public async Task<IActionResult> RemoveAssignee(long id, long userId, CancellationToken ct)
+    {
+        await tasks.RemoveAssigneeAsync(id, userId, ct);
+        return NoContent();
+    }
+
     // --- Dependencies ---
 
     [HttpPost("{id:long}/dependencies")]

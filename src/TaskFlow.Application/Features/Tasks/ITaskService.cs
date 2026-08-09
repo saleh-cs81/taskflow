@@ -28,6 +28,10 @@ public interface ITaskService
     Task AddWatcherAsync(long taskId, long userId, CancellationToken ct = default);
     Task RemoveWatcherAsync(long taskId, long userId, CancellationToken ct = default);
 
+    // Multiple assignees (many-to-many; TaskItem.AssigneeId stays as the primary assignee).
+    Task AddAssigneeAsync(long taskId, long userId, CancellationToken ct = default);
+    Task RemoveAssigneeAsync(long taskId, long userId, CancellationToken ct = default);
+
     // Dependencies
     Task<DependencyDto> AddDependencyAsync(long taskId, AddDependencyRequest request, CancellationToken ct = default);
     Task RemoveDependencyAsync(long taskId, long dependencyId, CancellationToken ct = default);

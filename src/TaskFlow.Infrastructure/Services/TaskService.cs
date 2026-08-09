@@ -121,6 +121,16 @@ public class TaskService(
         var task = await db.Tasks.FirstOrDefaultAsync(t => t.Id == id, ct)
             ?? throw new NotFoundAppException("error.not_found");
 
+        // Move to another project: reset list/milestone (they belong to the old project).
+        if (r.ProjectId is not null && r.ProjectId != task.ProjectId)
+        {
+            var projOk = await db.Projects.AnyAsync(p => p.Id == r.ProjectId, ct);
+            if (!projOk) throw new ValidationAppException("error.validation");
+            task.ProjectId = r.ProjectId.Value;
+            task.TaskListId = null;
+            task.MilestoneId = null;
+        }
+
         if (r.TaskListId is not null && r.TaskListId != task.TaskListId)
         {
             var listOk = await db.TaskLists.AnyAsync(l => l.Id == r.TaskListId && l.ProjectId == task.ProjectId, ct);
@@ -214,6 +224,30 @@ public class TaskService(
         var w = await db.TaskWatchers.FirstOrDefaultAsync(x => x.TaskId == taskId && x.UserId == userId, ct);
         if (w is null) return;
         db.TaskWatchers.Remove(w);
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task AddAssigneeAsync(long taskId, long userId, CancellationToken ct = default)
+    {
+        var task = await db.Tasks.FirstOrDefaultAsync(t => t.Id == taskId, ct)
+            ?? throw new NotFoundAppException("error.not_found");
+        if (await db.TaskAssignees.AnyAsync(a => a.TaskId == taskId && a.UserId == userId, ct)) return;
+        db.TaskAssignees.Add(new TaskAssignee { TaskId = taskId, UserId = userId });
+        if (task.AssigneeId is null) task.AssigneeId = userId; // keep the primary assignee in sync for the single-assignee UI
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task RemoveAssigneeAsync(long taskId, long userId, CancellationToken ct = default)
+    {
+        var task = await db.Tasks.FirstOrDefaultAsync(t => t.Id == taskId, ct)
+            ?? throw new NotFoundAppException("error.not_found");
+        var a = await db.TaskAssignees.FirstOrDefaultAsync(x => x.TaskId == taskId && x.UserId == userId, ct);
+        if (a is null) return;
+        db.TaskAssignees.Remove(a);
+        if (task.AssigneeId == userId)
+            task.AssigneeId = await db.TaskAssignees
+                .Where(x => x.TaskId == taskId && x.UserId != userId)
+                .Select(x => (long?)x.UserId).FirstOrDefaultAsync(ct);
         await db.SaveChangesAsync(ct);
     }
 
@@ -359,6 +393,8 @@ public class TaskService(
             .Where(t => t.ParentTaskId != null && ids.Contains(t.ParentTaskId!.Value))
             .GroupBy(t => t.ParentTaskId!.Value)
             .Select(g => new { TaskId = g.Key, Count = g.Count() }).ToListAsync(ct);
+        var assignees = await db.TaskAssignees.AsNoTracking().Where(a => ids.Contains(a.TaskId))
+            .Select(a => new { a.TaskId, a.UserId }).ToListAsync(ct);
 
         var order = ids.ToList();
         return tasks.OrderBy(t => order.IndexOf(t.Id)).Select(t =>
@@ -366,11 +402,12 @@ public class TaskService(
             var taskTags = tags.Where(x => x.TaskId == t.Id).Select(x => x.Name).ToList();
             var cl = checklist.FirstOrDefault(x => x.TaskId == t.Id);
             var sc = subtaskCounts.FirstOrDefault(x => x.TaskId == t.Id);
+            var asg = assignees.Where(x => x.TaskId == t.Id).Select(x => x.UserId).ToList();
             return new TaskDto(
                 t.Id, t.ProjectId, t.TaskListId, t.ParentTaskId, t.MilestoneId, t.Title, t.Description,
                 t.Status, t.Priority, t.AssigneeId, t.ReporterId, t.StartDate, t.DueDate, t.EstimateHours,
                 t.CompletedAtUtc, t.Position, t.IsBillable, taskTags,
-                cl?.Total ?? 0, cl?.Done ?? 0, sc?.Count ?? 0, t.CreatedAtUtc, t.UpdatedAtUtc);
+                cl?.Total ?? 0, cl?.Done ?? 0, sc?.Count ?? 0, t.CreatedAtUtc, t.UpdatedAtUtc, asg);
         }).ToList();
     }
 }
