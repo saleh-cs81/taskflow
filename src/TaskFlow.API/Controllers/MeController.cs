@@ -3,14 +3,20 @@ using Microsoft.AspNetCore.Mvc;
 using TaskFlow.API.Authorization;
 using TaskFlow.Application.Common.Authorization;
 using TaskFlow.Application.Common.Interfaces;
+using TaskFlow.Application.Features.Tasks;
 
 namespace TaskFlow.API.Controllers;
 
 [ApiController]
 [Route("api/v1/me")]
 [Authorize]
-public class MeController(ICurrentUser currentUser, ITenantContext tenant) : ControllerBase
+public class MeController(ICurrentUser currentUser, ITenantContext tenant, ITaskService tasks) : ControllerBase
 {
+    // Open tasks assigned to me across all projects (powers Home > My Day / My Tasks).
+    [HttpGet("tasks")]
+    public async Task<ActionResult<IReadOnlyList<AssignedTaskDto>>> MyTasks([FromQuery] bool includeDone = false, CancellationToken ct = default)
+        => Ok(await tasks.ListMineAsync(includeDone, ct));
+
     [HttpGet]
     public IActionResult Get() => Ok(new
     {

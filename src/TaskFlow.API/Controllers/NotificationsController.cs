@@ -38,6 +38,6 @@ public class NotificationsController(INotificationService notifications) : Contr
 public class ActivityController(IActivityService activity) : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<ActivityDto>>> Feed([FromQuery] int take = 50, CancellationToken ct = default)
-        => Ok(await activity.GetFeedAsync(take, ct));
+    public async Task<ActionResult<IReadOnlyList<ActivityDto>>> Feed([FromQuery] int take = 50, [FromQuery] long? projectId = null, CancellationToken ct = default)
+        => Ok(await activity.GetFeedAsync(take, projectId, ct));
 }

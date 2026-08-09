@@ -53,9 +53,13 @@ public class MigrationService(
     public Task<StartMigrationResult> StartBatchAsync(int count, CancellationToken ct = default)
         => QueueRunAsync(MigrationJobType.Full, count > 0 ? count : null, MigrationMode.Batch, null, ct);
 
-    // Migrate base/shared data only (users, clients, contacts, statuses, client-level financials).
+    // Step 1 — migrate users only (also builds the project catalog).
     public Task<StartMigrationResult> StartUsersAsync(CancellationToken ct = default)
         => QueueRunAsync(MigrationJobType.Full, null, MigrationMode.Users, null, ct);
+
+    // Step 2 — migrate clients (+ contacts + client-level financials).
+    public Task<StartMigrationResult> StartClientsAsync(CancellationToken ct = default)
+        => QueueRunAsync(MigrationJobType.Full, null, MigrationMode.Clients, null, ct);
 
     // Migrate ONE project, fully (self-contained).
     public Task<StartMigrationResult> StartProjectAsync(long paymoProjectId, CancellationToken ct = default)
@@ -101,7 +105,7 @@ public class MigrationService(
     {
         var items = await db.MigrationProjectItems.AsNoTracking().OrderBy(i => i.Seq)
             .Select(i => new MigrationProjectItemDto(
-                i.PaymoProjectId, i.Name, i.Status, i.RecordCount, i.ErrorMessage, i.ImportedAtUtc))
+                i.PaymoProjectId, i.Name, i.Code, i.Status, i.RecordCount, i.ErrorMessage, i.ImportedAtUtc))
             .ToListAsync(ct);
         var imported = items.Count(i => i.Status == MigrationProjectStatus.Imported);
         var failed = items.Count(i => i.Status == MigrationProjectStatus.Failed);
@@ -142,8 +146,24 @@ public class MigrationService(
             }
             var since = item.Type == MigrationJobType.Incremental ? conn.LastSyncUtc : null;
 
-            // Base reference + prerequisite data (users, clients, contacts, statuses), gated to run once.
-            var (userMap, clientMap, statusMap, wfStatuses) = await EnsureBaseDataAsync(job, apiKey, since, ct);
+            // Statuses always; users/clients per step (each idempotent + gated so it imports once).
+            var (statusMap, wfStatuses) = await EnsureStatusesAsync(job, apiKey, ct);
+            Dictionary<long, long> userMap, clientMap;
+            switch (item.Mode)
+            {
+                case MigrationMode.Users:
+                    userMap = await EnsureUsersAsync(job, apiKey, ct);
+                    clientMap = await LoadIdMapAsync("Client", ct);
+                    break;
+                case MigrationMode.Clients:
+                    userMap = await LoadIdMapAsync("User", ct);
+                    clientMap = await EnsureClientsAsync(job, apiKey, since, ct);
+                    break;
+                default: // Project / Batch / Full — need both (safety net, no-op if already done)
+                    userMap = await EnsureUsersAsync(job, apiKey, ct);
+                    clientMap = await EnsureClientsAsync(job, apiKey, since, ct);
+                    break;
+            }
 
             var ctx = new ImportContext(userMap);
             foreach (var kv in wfStatuses) ctx.WorkflowStatus[kv.Key] = kv.Value;
@@ -161,9 +181,14 @@ public class MigrationService(
 
             if (item.Mode == MigrationMode.Users)
             {
-                // "Migrate users" page: base data (done above) + client-level financials. No projects.
+                // Step 1 — users only. The project catalog was refreshed above so the list is ready.
+                job.Message = $"{userMap.Count} users imported. Next: migrate clients.";
+            }
+            else if (item.Mode == MigrationMode.Clients)
+            {
+                // Step 2 — clients + contacts (imported above) + client-level financials.
                 await ImportFinancialsAsync(job, apiKey, clientMap, ctx, since, ct);
-                job.Message = $"Base data ready · {userMap.Count} users, {clientMap.Count} clients. Now migrate projects one by one.";
+                job.Message = $"{clientMap.Count} clients imported. Next: migrate projects one by one.";
             }
             else
             {
@@ -253,10 +278,9 @@ public class MigrationService(
         public Dictionary<long, PaymoWorkflowStatus> WorkflowStatus { get; } = new(); // paymo status_id -> workflow status
     }
 
-    // Base/reference + prerequisite data (statuses, users, clients, contacts). Users/clients import once
-    // (gated by PrereqDone) and are reused as id maps on later runs.
-    private async Task<(Dictionary<long, long> userMap, Dictionary<long, long> clientMap, Dictionary<long, string> statusMap, Dictionary<long, PaymoWorkflowStatus> wfStatuses)>
-        EnsureBaseDataAsync(MigrationJob job, string apiKey, DateTime? since, CancellationToken ct)
+    // Statuses + workflow statuses — cheap reference data, fetched every run (needed by tasks & the catalog).
+    private async Task<(Dictionary<long, string> statusMap, Dictionary<long, PaymoWorkflowStatus> wfStatuses)>
+        EnsureStatusesAsync(MigrationJob job, string apiKey, CancellationToken ct)
     {
         var statusMap = new Dictionary<long, string>();
         try { foreach (var s in await paymo.GetProjectStatusesAsync(apiKey, ct)) statusMap[s.Id] = s.Name; }
@@ -264,30 +288,44 @@ public class MigrationService(
         var wfStatuses = new Dictionary<long, PaymoWorkflowStatus>();
         try { foreach (var ws in await paymo.GetWorkflowStatusesAsync(apiKey, ct)) wfStatuses[ws.Id] = ws; }
         catch (Exception ex) { await RecordError(job, "WorkflowStatus", 0, ex, "workflowstatuses", ct); }
+        return (statusMap, wfStatuses);
+    }
 
-        Dictionary<long, long> userMap, clientMap;
-        if (await FindMappingAsync("PrereqDone", 0, ct) is null)
-        {
-            userMap = new();
-            foreach (var u in await SafeFetchAsync(job, "User", 0, () => paymo.GetUsersAsync(apiKey, ct), ct))
-            { try { userMap[u.Id] = await UpsertUserAsync(u, ct); job.ProcessedRecords++; } catch (Exception ex) { await RecordError(job, "User", u.Id, ex, u, ct); } }
-            clientMap = new();
-            foreach (var c in await SafeFetchAsync(job, "Client", 0, () => paymo.GetClientsAsync(apiKey, since, ct), ct))
-            { try { clientMap[c.Id] = await UpsertClientAsync(c, ct); job.ProcessedRecords++; } catch (Exception ex) { await RecordError(job, "Client", c.Id, ex, c, ct); } }
-            try
-            {
-                foreach (var cc in await paymo.GetClientContactsAsync(apiKey, ct))
-                {
-                    if (!clientMap.TryGetValue(cc.ClientId, out var lc)) continue;
-                    try { await UpsertClientContactAsync(cc, lc, ct); job.ProcessedRecords++; } catch (Exception ex) { await RecordError(job, "ClientContact", cc.Id, ex, cc, ct); }
-                }
-            }
-            catch (Exception ex) { await RecordError(job, "ClientContact", 0, ex, "contacts", ct); }
-            await EnsureMappingAsync("PrereqDone", 0, 0, ct);
-        }
-        else { userMap = await LoadIdMapAsync("User", ct); clientMap = await LoadIdMapAsync("Client", ct); }
+    // Users — imported once (gated by UsersDone, or the legacy PrereqDone), reused as an id map afterwards.
+    private async Task<Dictionary<long, long>> EnsureUsersAsync(MigrationJob job, string apiKey, CancellationToken ct)
+    {
+        if (await FindMappingAsync("UsersDone", 0, ct) is not null || await FindMappingAsync("PrereqDone", 0, ct) is not null)
+            return await LoadIdMapAsync("User", ct);
+
+        var userMap = new Dictionary<long, long>();
+        foreach (var u in await SafeFetchAsync(job, "User", 0, () => paymo.GetUsersAsync(apiKey, ct), ct))
+        { try { userMap[u.Id] = await UpsertUserAsync(u, ct); job.ProcessedRecords++; } catch (Exception ex) { await RecordError(job, "User", u.Id, ex, u, ct); } }
+        await EnsureMappingAsync("UsersDone", 0, 0, ct);
         await db.SaveChangesAsync(ct);
-        return (userMap, clientMap, statusMap, wfStatuses);
+        return userMap;
+    }
+
+    // Clients + their contacts — imported once (gated by ClientsDone, or the legacy PrereqDone).
+    private async Task<Dictionary<long, long>> EnsureClientsAsync(MigrationJob job, string apiKey, DateTime? since, CancellationToken ct)
+    {
+        if (await FindMappingAsync("ClientsDone", 0, ct) is not null || await FindMappingAsync("PrereqDone", 0, ct) is not null)
+            return await LoadIdMapAsync("Client", ct);
+
+        var clientMap = new Dictionary<long, long>();
+        foreach (var c in await SafeFetchAsync(job, "Client", 0, () => paymo.GetClientsAsync(apiKey, since, ct), ct))
+        { try { clientMap[c.Id] = await UpsertClientAsync(c, ct); job.ProcessedRecords++; } catch (Exception ex) { await RecordError(job, "Client", c.Id, ex, c, ct); } }
+        try
+        {
+            foreach (var cc in await paymo.GetClientContactsAsync(apiKey, ct))
+            {
+                if (!clientMap.TryGetValue(cc.ClientId, out var lc)) continue;
+                try { await UpsertClientContactAsync(cc, lc, ct); job.ProcessedRecords++; } catch (Exception ex) { await RecordError(job, "ClientContact", cc.Id, ex, cc, ct); }
+            }
+        }
+        catch (Exception ex) { await RecordError(job, "ClientContact", 0, ex, "contacts", ct); }
+        await EnsureMappingAsync("ClientsDone", 0, 0, ct);
+        await db.SaveChangesAsync(ct);
+        return clientMap;
     }
 
     // True if Stop was requested for this job (set on a different request/context, so read fresh).
@@ -304,6 +342,8 @@ public class MigrationService(
         var userMap = ctx.UserMap;
         var projectTaskPaymoIds = new List<long>();   // for subtasks + booking resolution
         var projectThreads = new List<long>();         // for this project's comments
+        // Project members = Paymo project "users" + everyone assigned to a task here (local user ids).
+        var memberLocalIds = new HashSet<long>(project.MemberUserIds.Where(userMap.ContainsKey).Select(a => userMap[a]));
 
         // Milestones (project-level, supplied from the per-run fetch), so tasks can link through their task list.
         var milestoneMap = new Dictionary<long, long>();
@@ -336,6 +376,7 @@ public class MigrationService(
                 long? localMilestone = t.TaskListId is { } lid2 && listMilestone.TryGetValue(lid2, out var pm)
                     && milestoneMap.TryGetValue(pm, out var lm) ? lm : null;
                 var assignees = t.AssigneeUserIds.Where(userMap.ContainsKey).Select(a => userMap[a]).ToList();
+                foreach (var a in assignees) memberLocalIds.Add(a);
                 var localTaskId = await UpsertTaskAsync(t, localProjectId, localList, localMilestone, assignees, ctx.WorkflowStatus, ct);
                 ctx.TaskByPaymo[t.Id] = localTaskId;
                 projectTaskPaymoIds.Add(t.Id);
@@ -444,6 +485,23 @@ public class MigrationService(
                 catch (Exception ex) { await RecordError(job, "Booking", bk.Id, ex, bk, ct); }
             }
         }
+
+        // Project members: assign everyone who is a Paymo project member or has a task here.
+        foreach (var localUserId in memberLocalIds)
+        {
+            try { await UpsertProjectMemberAsync(localProjectId, localUserId, ct); }
+            catch (Exception ex) { await RecordError(job, "ProjectMember", localUserId, ex, "member", ct); }
+        }
+    }
+
+    // Idempotent project membership (ProjectId + UserId).
+    private async Task UpsertProjectMemberAsync(long localProjectId, long localUserId, CancellationToken ct)
+    {
+        var exists = await db.ProjectMembers.IgnoreQueryFilters()
+            .AnyAsync(m => m.ProjectId == localProjectId && m.UserId == localUserId, ct);
+        if (exists) return;
+        db.ProjectMembers.Add(new ProjectMember { ProjectId = localProjectId, UserId = localUserId, RoleInProject = "Member" });
+        await db.SaveChangesAsync(ct);
     }
 
     // Subtasks can't be filtered by project_id; fetch all once and map to imported tasks by task_id.
@@ -846,11 +904,12 @@ public class MigrationService(
         long? localClient = p.ClientId is { } cid && clientMap.TryGetValue(cid, out var lc) ? lc : null;
         var status = MapProjectStatus(p, statusMap);
 
+        var deptId = await ResolveDeptIdAsync(p.Code, ct);
         var existing = await FindMappingAsync("Project", p.Id, ct);
         if (existing is not null)
         {
             var proj = await db.Projects.FirstOrDefaultAsync(x => x.Id == existing.LocalId, ct);
-            if (proj is not null) ApplyProject(proj, p, localClient, status);
+            if (proj is not null) { ApplyProject(proj, p, localClient, status); proj.DepartmentId = deptId; }
             existing.LastSyncedUtc = clock.UtcNow;
             await db.SaveChangesAsync(ct);
             return existing.LocalId;
@@ -858,10 +917,26 @@ public class MigrationService(
 
         var created = new Project();
         ApplyProject(created, p, localClient, status);
+        created.DepartmentId = deptId;
         db.Projects.Add(created);
         await db.SaveChangesAsync(ct);
         await AddMappingAsync("Project", p.Id, created.Id, ct);
         return created.Id;
+    }
+
+    // Cached-per-run resolution of a Paymo project code -> local department by longest CodePrefix match.
+    private List<(long Id, string? Prefix)>? _deptCache;
+    private async Task<long?> ResolveDeptIdAsync(string? code, CancellationToken ct)
+    {
+        _deptCache ??= (await db.Departments.AsNoTracking()
+                .Select(d => new { d.Id, d.CodePrefix }).ToListAsync(ct))
+            .Select(d => (d.Id, Prefix: d.CodePrefix)).ToList();
+        long? catchAll = _deptCache.Where(d => string.IsNullOrEmpty(d.Prefix)).Select(d => (long?)d.Id).FirstOrDefault();
+        if (string.IsNullOrEmpty(code)) return catchAll;
+        var match = _deptCache.Where(d => !string.IsNullOrEmpty(d.Prefix))
+            .OrderByDescending(d => d.Prefix!.Length)
+            .FirstOrDefault(d => code.StartsWith(d.Prefix!, StringComparison.OrdinalIgnoreCase));
+        return match.Id != 0 ? match.Id : catchAll;
     }
 
     private static void ApplyProject(Project proj, PaymoProject p, long? localClient, ProjectStatus status)
@@ -924,6 +999,9 @@ public class MigrationService(
                 task.MilestoneId = localMilestoneId; task.Status = status; task.Priority = priority;
                 task.DueDate = t.DueDate; task.StartDate = t.StartDate; task.AssigneeId = primary;
                 task.Position = pos; task.CompletedAtUtc = completedAt;
+                // Preserve Paymo's original timestamps (the audit interceptor keeps an already-set CreatedAtUtc).
+                if (t.CreatedOn is { } co) task.CreatedAtUtc = DateTime.SpecifyKind(co, DateTimeKind.Utc);
+                if (t.UpdatedOn is { } uo) task.UpdatedAtUtc = DateTime.SpecifyKind(uo, DateTimeKind.Utc);
             }
             existing.LastSyncedUtc = clock.UtcNow;
             await db.SaveChangesAsync(ct);
@@ -936,7 +1014,10 @@ public class MigrationService(
                 ProjectId = localProjectId, TaskListId = localListId, MilestoneId = localMilestoneId,
                 Title = t.Name, Description = t.Description, Status = status, Priority = priority,
                 DueDate = t.DueDate, StartDate = t.StartDate, AssigneeId = primary, Position = pos,
-                CompletedAtUtc = completedAt
+                CompletedAtUtc = completedAt,
+                // Preserve Paymo's original timestamps; the interceptor only fills CreatedAtUtc when it's unset.
+                CreatedAtUtc = t.CreatedOn is { } co ? DateTime.SpecifyKind(co, DateTimeKind.Utc) : default,
+                UpdatedAtUtc = t.UpdatedOn is { } uo ? DateTime.SpecifyKind(uo, DateTimeKind.Utc) : null
             };
             db.Tasks.Add(created);
             await db.SaveChangesAsync(ct);
@@ -1209,6 +1290,8 @@ public class MigrationService(
         if (taskIds.Length > 0) await db.Tasks.IgnoreQueryFilters().Where(x => taskIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
         if (listIds.Length > 0) await db.TaskLists.IgnoreQueryFilters().Where(x => listIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
         if (milestoneIds.Length > 0) await db.Milestones.IgnoreQueryFilters().Where(x => milestoneIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
+        // Project members (added by the migration) must go before Projects/Users to avoid FK 547.
+        if (projIds.Length > 0) await db.ProjectMembers.IgnoreQueryFilters().Where(x => projIds.Contains(x.ProjectId)).ExecuteDeleteAsync(ct);
         if (projIds.Length > 0) await db.Projects.IgnoreQueryFilters().Where(x => projIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
         if (contactIds.Length > 0) await db.ClientContacts.IgnoreQueryFilters().Where(x => contactIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
         if (clientIds.Length > 0) await db.Clients.IgnoreQueryFilters().Where(x => clientIds.Contains(x.Id)).ExecuteDeleteAsync(ct);
@@ -1285,6 +1368,7 @@ public class MigrationService(
             if (existing.TryGetValue(p.Id, out var row))
             {
                 row.Name = p.Name;
+                row.Code = p.Code;
                 row.Seq = seq;
             }
             else
@@ -1292,7 +1376,7 @@ public class MigrationService(
                 var carriedOver = doneMap.TryGetValue(p.Id, out var localId);
                 db.MigrationProjectItems.Add(new MigrationProjectItem
                 {
-                    PaymoProjectId = p.Id, Name = p.Name, Seq = seq,
+                    PaymoProjectId = p.Id, Name = p.Name, Code = p.Code, Seq = seq,
                     Status = carriedOver ? MigrationProjectStatus.Imported : MigrationProjectStatus.Pending,
                     LocalProjectId = carriedOver ? localId : null,
                     ImportedAtUtc = carriedOver ? clock.UtcNow : null

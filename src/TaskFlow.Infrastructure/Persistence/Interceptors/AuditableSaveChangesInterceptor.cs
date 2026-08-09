@@ -32,8 +32,9 @@ public class AuditableSaveChangesInterceptor(ICurrentUser currentUser, ITenantCo
             switch (entry.State)
             {
                 case EntityState.Added:
-                    entry.Entity.CreatedAtUtc = now;
-                    entry.Entity.CreatedById = userId;
+                    // Keep an already-set CreatedAtUtc (e.g. data migrated from Paymo with its original date).
+                    if (entry.Entity.CreatedAtUtc == default) entry.Entity.CreatedAtUtc = now;
+                    entry.Entity.CreatedById ??= userId;
                     break;
                 case EntityState.Modified:
                     entry.Entity.UpdatedAtUtc = now;

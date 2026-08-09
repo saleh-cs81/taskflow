@@ -36,6 +36,7 @@ public enum MigrationMode
 {
     Full = 0,       // everything (legacy)
     Batch = 1,      // next N pending projects
-    Users = 2,      // base data only: users, clients, contacts, statuses, client-level financials
-    Project = 3     // one specific project, fully (self-contained)
+    Users = 2,      // users only (+ statuses; builds the project catalog)
+    Project = 3,    // one specific project, fully (self-contained)
+    Clients = 4     // clients + contacts + client-level financials
 }

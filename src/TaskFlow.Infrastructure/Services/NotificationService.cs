@@ -78,10 +78,19 @@ public class ActivityService(IAppDbContext db, ICurrentUser currentUser) : IActi
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task<IReadOnlyList<ActivityDto>> GetFeedAsync(int take, CancellationToken ct = default)
-        => await db.ActivityLogs.AsNoTracking()
-            .OrderByDescending(a => a.CreatedAtUtc)
+    public async Task<IReadOnlyList<ActivityDto>> GetFeedAsync(int take, long? projectId = null, CancellationToken ct = default)
+    {
+        var q = db.ActivityLogs.AsNoTracking();
+        if (projectId is { } pid)
+        {
+            // Activity rows carry no ProjectId, so scope to the project entity + its tasks.
+            var taskIds = await db.Tasks.AsNoTracking().Where(t => t.ProjectId == pid).Select(t => t.Id).ToListAsync(ct);
+            q = q.Where(a => (a.EntityType == "Project" && a.EntityId == pid)
+                          || (a.EntityType == "Task" && a.EntityId != null && taskIds.Contains(a.EntityId.Value)));
+        }
+        return await q.OrderByDescending(a => a.CreatedAtUtc)
             .Take(Math.Clamp(take, 1, 200))
             .Select(a => new ActivityDto(a.Id, a.UserId, a.Action, a.EntityType, a.EntityId, a.CreatedAtUtc))
             .ToListAsync(ct);
+    }
 }

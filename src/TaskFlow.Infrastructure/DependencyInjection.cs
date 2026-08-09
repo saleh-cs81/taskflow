@@ -31,13 +31,18 @@ public static class DependencyInjection
     {
         services.Configure<JwtOptions>(config.GetSection(JwtOptions.SectionName));
 
+        services.AddScoped<AuditLogInterceptor>();
         services.AddScoped<AuditableSaveChangesInterceptor>();
         services.AddDbContext<AppDbContext>((sp, options) =>
         {
             options.UseSqlServer(
                 config.GetConnectionString("Default"),
                 sql => sql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName));
-            options.AddInterceptors(sp.GetRequiredService<AuditableSaveChangesInterceptor>());
+            // Audit interceptor runs FIRST so it sees true delete states before the
+            // auditable interceptor rewrites soft-deletes into updates.
+            options.AddInterceptors(
+                sp.GetRequiredService<AuditLogInterceptor>(),
+                sp.GetRequiredService<AuditableSaveChangesInterceptor>());
         });
         services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
@@ -58,6 +63,7 @@ public static class DependencyInjection
         services.AddScoped<IReportExporter, ReportExporter>();
         services.AddScoped<IUserAdminService, UserAdminService>();
         services.AddScoped<IInvitationService, InvitationService>();
+        services.AddScoped<TaskFlow.Application.Features.Audit.IAuditService, AuditQueryService>();
 
         // Paymo integration: encrypt API keys at rest; pick sandbox vs real HTTP client.
         // Persist the data-protection key ring to a stable folder so encrypted API keys
@@ -88,6 +94,7 @@ public static class DependencyInjection
         services.AddScoped<IBillingService, BillingService>();
 
         services.AddScoped<IClientService, ClientService>();
+        services.AddScoped<IDepartmentAccess, DepartmentAccess>();
         services.AddScoped<IDepartmentService, DepartmentService>();
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<IDiscussionService, DiscussionService>();

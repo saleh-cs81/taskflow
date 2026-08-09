@@ -5,76 +5,166 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TaskFlow</title>
   <link id="bootstrap-css" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
-  <link rel="stylesheet" href="/assets/css/app.css">
+  <link rel="stylesheet" href="/assets/css/app.css?v=20260706o">
 </head>
 <body>
   <div id="navbar"></div>
 
   <div class="container-fluid py-3">
-    <div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
       <h4 class="mb-0"><span data-i18n="board.title"></span>: <span id="projectName"></span></h4>
-      <select class="form-select form-select-sm w-auto" id="projectPicker"></select>
-    </div>
-    <div class="board" id="board"></div>
-  </div>
-
-  <!-- Task modal (used both for "add task" and to edit a clicked card) -->
-  <div class="modal fade" id="taskModal" tabindex="-1">
-    <div class="modal-dialog">
-      <div class="modal-content">
-        <form id="taskForm">
-          <div class="modal-header">
-            <h5 class="modal-title" id="taskModalTitle" data-i18n="task.create"></h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-          </div>
-          <div class="modal-body">
-            <div id="taskError"></div>
-            <input type="hidden" id="tf_listId">
-            <div class="mb-3">
-              <label class="form-label" data-i18n="task.title"></label>
-              <input type="text" class="form-control" id="tf_title" required maxlength="300">
-            </div>
-            <div class="mb-3">
-              <label class="form-label" data-i18n="task.description"></label>
-              <textarea class="form-control" id="tf_desc" rows="2" maxlength="2000"></textarea>
-            </div>
-            <div class="row g-2">
-              <div class="col-6">
-                <label class="form-label" data-i18n="task.priority"></label>
-                <select class="form-select" id="tf_priority">
-                  <option value="0" data-i18n="task.prio.low"></option>
-                  <option value="1" selected data-i18n="task.prio.normal"></option>
-                  <option value="2" data-i18n="task.prio.high"></option>
-                  <option value="3" data-i18n="task.prio.urgent"></option>
-                </select>
-              </div>
-              <div class="col-6">
-                <label class="form-label" data-i18n="task.dueDate"></label>
-                <input type="date" class="form-control" id="tf_due">
-              </div>
-            </div>
-            <div class="mb-2 mt-3">
-              <label class="form-label" data-i18n="task.assignee"></label>
-              <select class="form-select" id="tf_assignee"></select>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="proj.cancel"></button>
-            <button type="submit" class="btn btn-primary" data-i18n="task.add"></button>
-          </div>
-        </form>
+      <div class="d-flex align-items-center gap-2">
+        <select class="form-select form-select-sm w-auto" id="projectPicker"></select>
+        <div class="btn-group btn-group-sm" role="group" id="taskViewSwitch">
+          <button type="button" class="btn btn-outline-secondary" data-view="list" data-i18n-title="view.list"><i class="bi bi-list-ul"></i></button>
+          <button type="button" class="btn btn-outline-secondary" data-view="grid" data-i18n-title="view.grid"><i class="bi bi-grid-3x3-gap-fill"></i></button>
+          <button type="button" class="btn btn-outline-secondary" data-view="cards" data-i18n-title="view.cards"><i class="bi bi-card-heading"></i></button>
+        </div>
+        <button class="btn btn-primary btn-sm" id="addTaskBtn">+ <span data-i18n="board.addTask"></span></button>
+        <button class="btn btn-outline-danger btn-sm" id="deleteProjBtn" title="" data-i18n-title="board.deleteProject"><i class="bi bi-trash"></i></button>
       </div>
     </div>
+
+    <!-- Compact members strip -->
+    <div class="card shadow-sm mb-3"><div class="card-body py-2 d-flex align-items-center flex-wrap gap-2">
+      <span class="fw-semibold me-1"><span data-i18n="board.members"></span> <span class="badge bg-secondary" id="memberCount">0</span></span>
+      <div id="projectMembers" class="d-flex flex-wrap gap-1"></div>
+      <div class="dropdown ms-auto">
+        <button class="btn btn-sm btn-outline-primary" id="addMemberBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"><i class="bi bi-person-plus"></i> <span data-i18n="board.addMember"></span></button>
+        <div class="dropdown-menu dropdown-menu-end p-2" style="min-width:270px">
+          <input class="form-control form-control-sm mb-2" id="memberSearch" placeholder="" data-i18n-ph="board.searchUser">
+          <div id="memberPicker" style="max-height:240px;overflow:auto"></div>
+        </div>
+      </div>
+    </div></div>
+
+    <!-- Project workspace sub-tabs -->
+    <ul class="nav nav-tabs mb-3" id="wsTabs">
+      <li class="nav-item"><button class="nav-link active" data-tab="overview" data-i18n="ws.overview"></button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="tasks" data-i18n="ws.tasks"></button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="milestones" data-i18n="ws.milestones"></button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="timesheets" data-i18n="ws.timesheets"></button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="finance" data-i18n="ws.finance"></button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="files" data-i18n="ws.files"></button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="discussions" data-i18n="ws.discussions"></button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="activity" data-i18n="ws.activity"></button></li>
+    </ul>
+
+    <!-- Overview (default tab): project summary, members and files -->
+    <section class="tab-pane" data-pane="overview">
+      <div class="row g-3 mb-3" id="ovStats"></div>
+      <div class="row g-3">
+        <div class="col-lg-7"><div class="card shadow-sm"><div class="card-body">
+          <h6 class="mb-2" data-i18n="ws.about"></h6>
+          <div id="ovDetails"></div>
+        </div></div></div>
+        <div class="col-lg-5"><div class="card shadow-sm"><div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0"><span class="text-muted">📁</span> <span data-i18n="board.projectFiles"></span> <span class="badge bg-light text-dark border" id="ovFilesCount">0</span></h6>
+            <button class="btn btn-sm btn-outline-primary" id="ovUploadBtn"><i class="bi bi-upload"></i> <span data-i18n="board.upload"></span></button>
+          </div>
+          <div id="ovFilesList"></div>
+          <input type="file" id="ovFileInput" class="d-none">
+        </div></div></div>
+      </div>
+    </section>
+
+    <section class="tab-pane d-none" data-pane="tasks">
+      <div class="row g-3" id="taskGrid"></div>
+      <!-- Project-level files: their own section at the BOTTOM, in a multi-column grid (task files stay on each task card) -->
+      <div class="card shadow-sm mt-3"><div class="card-body py-2">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h6 class="mb-0"><span class="text-muted">📁</span> <span data-i18n="board.projectFiles"></span> <span class="badge bg-light text-dark border" id="projFilesCount">0</span></h6>
+          <button class="btn btn-sm btn-outline-primary" id="uploadProjFileBtn"><i class="bi bi-upload"></i> <span data-i18n="board.upload"></span></button>
+        </div>
+        <div id="projFilesList"></div>
+        <input type="file" id="projFileInput" class="d-none">
+      </div></div>
+    </section>
+    <section class="tab-pane d-none" data-pane="milestones">
+      <div class="card shadow-sm"><div class="card-body">
+        <form id="msForm" class="d-flex gap-2 mb-3 flex-wrap">
+          <input class="form-control form-control-sm" style="max-width:280px" id="ms_name" placeholder="" data-i18n-ph="ws.msName" required maxlength="200">
+          <input type="date" class="form-control form-control-sm w-auto" id="ms_due">
+          <button class="btn btn-sm btn-primary" data-i18n="common.add"></button>
+        </form>
+        <div id="msList"></div>
+      </div></div>
+    </section>
+    <section class="tab-pane d-none" data-pane="timesheets"><div class="card shadow-sm"><div class="card-body" id="timesheetBody"></div></div></section>
+    <section class="tab-pane d-none" data-pane="finance"><div id="financeBody"></div></section>
+    <section class="tab-pane d-none" data-pane="files"><div class="card shadow-sm"><div class="card-body" id="filesAll"></div></div></section>
+    <section class="tab-pane d-none" data-pane="discussions">
+      <div class="card shadow-sm"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h6 class="mb-0" data-i18n="ws.discussions"></h6>
+          <button class="btn btn-sm btn-primary" id="newDiscBtn">+ <span data-i18n="ws.newDisc"></span></button>
+        </div>
+        <div id="discList"></div>
+      </div></div>
+    </section>
+    <section class="tab-pane d-none" data-pane="activity"><div class="card shadow-sm"><div class="card-body"><ul class="list-group list-group-flush" id="activityFeed"></ul></div></div></section>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
+  <!-- Task create modal -->
+  <div class="modal fade" id="taskModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+    <form id="taskForm">
+      <div class="modal-header"><h5 class="modal-title" data-i18n="task.create"></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div id="taskError"></div><input type="hidden" id="tf_listId">
+        <div class="mb-3"><label class="form-label" data-i18n="task.title"></label><input type="text" class="form-control" id="tf_title" required maxlength="300"></div>
+        <div class="mb-3"><label class="form-label" data-i18n="task.description"></label>
+          <div class="tf-editor-toolbar btn-group btn-group-sm mb-1" role="group">
+            <button type="button" class="btn btn-outline-secondary" data-cmd="bold" title="Bold"><b>B</b></button>
+            <button type="button" class="btn btn-outline-secondary" data-cmd="italic" title="Italic"><i>I</i></button>
+            <button type="button" class="btn btn-outline-secondary" data-cmd="underline" title="Underline"><u>U</u></button>
+            <button type="button" class="btn btn-outline-secondary" data-cmd="insertUnorderedList" title="Bulleted list">&bull;&nbsp;≡</button>
+            <button type="button" class="btn btn-outline-secondary" data-cmd="insertOrderedList" title="Numbered list">1.</button>
+            <button type="button" class="btn btn-outline-secondary" data-cmd="createLink" title="Link"><i class="bi bi-link-45deg"></i></button>
+            <button type="button" class="btn btn-outline-secondary" data-cmd="removeFormat" title="Clear formatting"><i class="bi bi-eraser"></i></button>
+          </div>
+          <div id="tf_desc" class="form-control tf-rich tf-editor" contenteditable="true"></div>
+        </div>
+        <div class="row g-2">
+          <div class="col-6"><label class="form-label" data-i18n="task.priority"></label>
+            <select class="form-select" id="tf_priority"><option value="0" data-i18n="task.prio.low"></option><option value="1" selected data-i18n="task.prio.normal"></option><option value="2" data-i18n="task.prio.high"></option><option value="3" data-i18n="task.prio.urgent"></option></select></div>
+          <div class="col-6"><label class="form-label" data-i18n="task.dueDate"></label><input type="date" class="form-control" id="tf_due"></div>
+        </div>
+        <div class="mb-2 mt-3"><label class="form-label" data-i18n="task.assignee"></label><select class="form-select" id="tf_assignee"></select></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="proj.cancel"></button><button type="submit" class="btn btn-primary" data-i18n="task.add"></button></div>
+    </form>
+  </div></div></div>
+
+  <!-- Task Detail offcanvas panel -->
+  <div class="offcanvas offcanvas-end" tabindex="-1" id="taskDetail" style="width:min(520px,100%)">
+    <div class="offcanvas-header border-bottom">
+      <h5 class="offcanvas-title" id="td_title"></h5>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+    </div>
+    <div class="offcanvas-body" id="td_body"></div>
+  </div>
+
+  <!-- New discussion modal -->
+  <div class="modal fade" id="discModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+    <form id="discForm">
+      <div class="modal-header"><h5 class="modal-title" data-i18n="ws.newDisc"></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div id="discError"></div>
+        <div class="mb-2"><label class="form-label" data-i18n="ws.dTitle"></label><input class="form-control" id="d_title" required maxlength="200"></div>
+        <div class="mb-2"><label class="form-label" data-i18n="ws.dFirst"></label><textarea class="form-control" id="d_first" rows="3" maxlength="4000"></textarea></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="common.cancel"></button><button type="submit" class="btn btn-primary" data-i18n="common.add"></button></div>
+    </form>
+  </div></div></div>
+
   <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="/assets/js/core/i18n.js"></script>
-  <script src="/assets/js/core/api.js"></script>
-  <script src="/assets/js/core/auth.js"></script>
-  <script src="/assets/js/core/realtime.js"></script>
-  <script src="/assets/js/core/ui.js"></script>
-  <script src="/assets/js/pages/board.js"></script>
+  <script src="/assets/js/core/i18n.js?v=20260706o"></script>
+  <script src="/assets/js/core/api.js?v=20260706o"></script>
+  <script src="/assets/js/core/auth.js?v=20260706o"></script>
+  <script src="/assets/js/core/realtime.js?v=20260706o"></script>
+  <script src="/assets/js/core/ui.js?v=20260706o"></script>
+  <script src="/assets/js/pages/board.js?v=20260706o"></script>
 </body>
 </html>

@@ -15,6 +15,35 @@ public class ClientsController(IClientService svc) : ControllerBase
     [RequirePermission(Permissions.Projects.View)]
     public async Task<ActionResult<IReadOnlyList<ClientDto>>> List(CancellationToken ct) => Ok(await svc.ListAsync(ct));
 
+    // --- Client Detail ---
+    [HttpGet("{id:long}")]
+    [RequirePermission(Permissions.Projects.View)]
+    public async Task<ActionResult<ClientDetailDto>> Get(long id, CancellationToken ct) => Ok(await svc.GetAsync(id, ct));
+
+    [HttpGet("{id:long}/contacts")]
+    [RequirePermission(Permissions.Projects.View)]
+    public async Task<ActionResult<IReadOnlyList<ClientContactDto>>> Contacts(long id, CancellationToken ct) => Ok(await svc.ListContactsAsync(id, ct));
+
+    [HttpPost("{id:long}/contacts")]
+    [RequirePermission(Permissions.Projects.Update)]
+    public async Task<ActionResult<ClientContactDto>> AddContact(long id, ClientContactRequest r, CancellationToken ct) => Ok(await svc.AddContactAsync(id, r, ct));
+
+    [HttpDelete("{id:long}/contacts/{contactId:long}")]
+    [RequirePermission(Permissions.Projects.Update)]
+    public async Task<IActionResult> DeleteContact(long id, long contactId, CancellationToken ct) { await svc.DeleteContactAsync(id, contactId, ct); return NoContent(); }
+
+    [HttpGet("{id:long}/projects")]
+    [RequirePermission(Permissions.Projects.View)]
+    public async Task<ActionResult<IReadOnlyList<ClientProjectDto>>> Projects(long id, CancellationToken ct) => Ok(await svc.ListProjectsAsync(id, ct));
+
+    [HttpGet("{id:long}/invoices")]
+    [RequirePermission(Permissions.Projects.View)]
+    public async Task<ActionResult<IReadOnlyList<ClientInvoiceDto>>> Invoices(long id, CancellationToken ct) => Ok(await svc.ListInvoicesAsync(id, ct));
+
+    [HttpGet("{id:long}/timesheet")]
+    [RequirePermission(Permissions.Projects.View)]
+    public async Task<ActionResult<IReadOnlyList<ClientTimesheetRowDto>>> Timesheet(long id, CancellationToken ct) => Ok(await svc.GetTimesheetAsync(id, ct));
+
     [HttpPost]
     [RequirePermission(Permissions.Projects.Create)]
     public async Task<ActionResult<ClientDto>> Create(ClientRequest r, CancellationToken ct) => Ok(await svc.CreateAsync(r, ct));
@@ -33,8 +62,8 @@ public class ClientsController(IClientService svc) : ControllerBase
 [Authorize]
 public class DepartmentsController(IDepartmentService svc) : ControllerBase
 {
+    // Any signed-in user: the service scopes the result (company admin -> all; others -> departments they admin).
     [HttpGet]
-    [RequirePermission(Permissions.Users.View)]
     public async Task<ActionResult<IReadOnlyList<DepartmentDto>>> List(CancellationToken ct) => Ok(await svc.ListAsync(ct));
 
     [HttpPost]
@@ -48,6 +77,12 @@ public class DepartmentsController(IDepartmentService svc) : ControllerBase
     [HttpDelete("{id:long}")]
     [RequirePermission(Permissions.Users.Manage)]
     public async Task<IActionResult> Delete(long id, CancellationToken ct) { await svc.DeleteAsync(id, ct); return NoContent(); }
+
+    // (Re)assign every project to its department by code prefix. Company-admin only.
+    [HttpPost("assign-projects")]
+    [RequirePermission(Permissions.Users.Manage)]
+    public async Task<ActionResult<object>> AssignProjects(CancellationToken ct)
+        => Ok(new { changed = await svc.AssignProjectsAsync(ct) });
 }
 
 [ApiController]

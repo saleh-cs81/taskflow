@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using TaskFlow.Domain.Entities;
 
 namespace TaskFlow.Application.Common.Interfaces;
@@ -6,6 +7,9 @@ namespace TaskFlow.Application.Common.Interfaces;
 // Abstraction over the EF Core DbContext so the Application layer stays persistence-agnostic.
 public interface IAppDbContext
 {
+    // For transactional bulk operations / raw SQL (e.g. purging a project's data atomically).
+    DatabaseFacade Database { get; }
+
     DbSet<Tenant> Tenants { get; }
     DbSet<User> Users { get; }
     DbSet<Role> Roles { get; }
@@ -52,6 +56,7 @@ public interface IAppDbContext
     DbSet<ClientContact> ClientContacts { get; }
     DbSet<TaskAssignee> TaskAssignees { get; }
     DbSet<Department> Departments { get; }
+    DbSet<DepartmentAdmin> DepartmentAdmins { get; }
     DbSet<Discussion> Discussions { get; }
     DbSet<DiscussionPost> DiscussionPosts { get; }
 

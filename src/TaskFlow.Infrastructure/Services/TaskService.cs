@@ -31,6 +31,23 @@ public class TaskService(
         return new PagedResult<TaskDto>(items, page.NormalizedPage, page.NormalizedSize, total);
     }
 
+    public async Task<IReadOnlyList<AssignedTaskDto>> ListMineAsync(bool includeDone = false, CancellationToken ct = default)
+    {
+        var me = currentUser.UserId;
+        if (me is null) return [];
+
+        // Assigned via the primary AssigneeId OR the many-to-many TaskAssignee set.
+        var query = db.Tasks.AsNoTracking()
+            .Where(t => t.AssigneeId == me || db.TaskAssignees.Any(a => a.TaskId == t.Id && a.UserId == me));
+        if (!includeDone) query = query.Where(t => t.Status != WorkStatus.Done);
+
+        return await query
+            .OrderBy(t => t.DueDate == null).ThenBy(t => t.DueDate).ThenByDescending(t => t.CreatedAtUtc)
+            .Select(t => new AssignedTaskDto(
+                t.Id, t.ProjectId, t.Project.Name, t.Title, t.Status, t.Priority, t.DueDate, t.CreatedAtUtc))
+            .ToListAsync(ct);
+    }
+
     public async Task<TaskDto> GetAsync(long id, CancellationToken ct = default)
     {
         var dtos = await BuildTaskDtos([id], ct);
@@ -353,7 +370,7 @@ public class TaskService(
                 t.Id, t.ProjectId, t.TaskListId, t.ParentTaskId, t.MilestoneId, t.Title, t.Description,
                 t.Status, t.Priority, t.AssigneeId, t.ReporterId, t.StartDate, t.DueDate, t.EstimateHours,
                 t.CompletedAtUtc, t.Position, t.IsBillable, taskTags,
-                cl?.Total ?? 0, cl?.Done ?? 0, sc?.Count ?? 0, t.CreatedAtUtc);
+                cl?.Total ?? 0, cl?.Done ?? 0, sc?.Count ?? 0, t.CreatedAtUtc, t.UpdatedAtUtc);
         }).ToList();
     }
 }

@@ -34,6 +34,20 @@ public class Department : TenantEntity
 {
     public string Name { get; set; } = string.Empty;
     public long? ManagerUserId { get; set; }
+    // Projects whose Code starts with this prefix belong to this department (e.g. "ASP-").
+    // Null/empty means the catch-all bucket for projects with no code / no matching prefix.
+    public string? CodePrefix { get; set; }
+
+    public ICollection<DepartmentAdmin> Admins { get; set; } = new List<DepartmentAdmin>();
+}
+
+// A user who administers a department (a user may admin several departments).
+public class DepartmentAdmin : TenantEntity
+{
+    public long DepartmentId { get; set; }
+    public long UserId { get; set; }
+
+    public Department Department { get; set; } = null!;
 }
 
 public class Discussion : TenantEntity

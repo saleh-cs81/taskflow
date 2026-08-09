@@ -3,10 +3,11 @@ using TaskFlow.Application.Common.Exceptions;
 using TaskFlow.Application.Common.Interfaces;
 using TaskFlow.Application.Features.Users;
 using TaskFlow.Domain.Entities;
+using TaskFlow.Domain.Enums;
 
 namespace TaskFlow.Infrastructure.Services;
 
-public class UserAdminService(IAppDbContext db, ICurrentUser currentUser) : IUserAdminService
+public class UserAdminService(IAppDbContext db, ICurrentUser currentUser, IPasswordHasher hasher, IDateTime clock) : IUserAdminService
 {
     public async Task<IReadOnlyList<UserListItemDto>> ListAsync(CancellationToken ct = default)
     {
@@ -45,6 +46,38 @@ public class UserAdminService(IAppDbContext db, ICurrentUser currentUser) : IUse
         await db.SaveChangesAsync(ct);
         var roleMap = await BuildRoleMap([id], ct);
         return ToDto(user, roleMap);
+    }
+
+    // Admin resets another user's password: hashes it, clears any reset token, revokes all their
+    // refresh tokens (signs them out everywhere), and records an audit entry.
+    public async Task SetPasswordAsync(long id, string newPassword, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 8 || newPassword.Length > 128)
+            throw new ValidationAppException("auth.password_length");
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct)
+            ?? throw new NotFoundAppException("error.not_found");
+
+        user.PasswordHash = hasher.Hash(newPassword);
+        user.PasswordResetTokenHash = null;
+        user.PasswordResetExpiresUtc = null;
+
+        var tokens = await db.RefreshTokens.Where(t => t.UserId == id && t.RevokedUtc == null).ToListAsync(ct);
+        foreach (var t in tokens) t.RevokedUtc = clock.UtcNow;
+
+        db.AuditLogs.Add(new AuditLog
+        {
+            TenantId = user.TenantId,
+            UserId = currentUser.UserId,
+            TableName = "Auth",
+            RecordId = user.Id.ToString(),
+            ChangeType = AuditChangeType.PasswordChanged,
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(new { @event = "admin_reset", target = user.Email }),
+            CreatedAtUtc = clock.UtcNow,
+            CreatedById = currentUser.UserId
+        });
+
+        await db.SaveChangesAsync(ct);
     }
 
     public async Task<IReadOnlyList<RoleDto>> ListRolesAsync(CancellationToken ct = default)

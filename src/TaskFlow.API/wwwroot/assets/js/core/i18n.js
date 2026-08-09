@@ -6,7 +6,8 @@ const I18N = {
   isRtl() { return this.lang === 'ar'; },
 
   async load() {
-    const res = await fetch(`/assets/locales/${this.lang}.json`);
+    // Version the locale fetch so new i18n keys aren't masked by a cached JSON. Bump on locale changes.
+    const res = await fetch(`/assets/locales/${this.lang}.json?v=20260706o`);
     this.dict = await res.json();
     this.applyDocument();
     this.translate(document);
@@ -35,6 +36,9 @@ const I18N = {
     });
     root.querySelectorAll('[data-i18n-ph]').forEach(el => {
       el.setAttribute('placeholder', this.t(el.getAttribute('data-i18n-ph')));
+    });
+    root.querySelectorAll('[data-i18n-title]').forEach(el => {
+      el.setAttribute('title', this.t(el.getAttribute('data-i18n-title')));
     });
   },
 

@@ -69,12 +69,19 @@ public class AuthService(
             .FirstOrDefaultAsync(u => u.NormalizedEmail == normalizedEmail, ct);
 
         if (user is null || !hasher.Verify(req.Password, user.PasswordHash))
+        {
+            if (user is not null) await AuthEventAsync(AuditChangeType.LoginFailed, user, "invalid_credentials", ct);
             throw new UnauthorizedAppException("auth.invalid_credentials");
+        }
         if (!user.IsActive)
+        {
+            await AuthEventAsync(AuditChangeType.LoginFailed, user, "account_disabled", ct);
             throw new UnauthorizedAppException("auth.account_disabled");
+        }
 
         tenant.SetTenant(user.TenantId);
         user.LastLoginUtc = clock.UtcNow;
+        db.AuditLogs.Add(AuthLog(AuditChangeType.Login, user, null));
         await db.SaveChangesAsync(ct);
 
         return await IssueTokensAsync(user, ip, ct);
@@ -107,6 +114,13 @@ public class AuthService(
         if (token is { RevokedUtc: null })
         {
             token.RevokedUtc = clock.UtcNow;
+            tenant.SetTenant(token.TenantId);
+            db.AuditLogs.Add(new AuditLog
+            {
+                TenantId = token.TenantId, UserId = token.UserId, TableName = "Auth",
+                RecordId = token.UserId.ToString(), ChangeType = AuditChangeType.Logout,
+                CreatedAtUtc = clock.UtcNow, CreatedById = token.UserId
+            });
             await db.SaveChangesAsync(ct);
         }
     }
@@ -165,6 +179,30 @@ public class AuthService(
             .Where(t => t.UserId == uid && t.RevokedUtc == null).ToListAsync(ct);
         foreach (var t in tokens) t.RevokedUtc = clock.UtcNow;
 
+        db.AuditLogs.Add(AuthLog(AuditChangeType.PasswordChanged, user, null));
+        await db.SaveChangesAsync(ct);
+    }
+
+    // ---- Auth audit helpers (written into the shared AuditLog table, TableName="Auth") ----
+    private AuditLog AuthLog(AuditChangeType type, User user, string? reason)
+        => new()
+        {
+            TenantId = user.TenantId,
+            UserId = user.Id,
+            TableName = "Auth",
+            RecordId = user.Id.ToString(),
+            ChangeType = type,
+            NewValuesJson = System.Text.Json.JsonSerializer.Serialize(
+                reason is null ? new { email = user.Email } : (object)new { email = user.Email, reason }),
+            CreatedAtUtc = clock.UtcNow,
+            CreatedById = user.Id
+        };
+
+    // Failed logins happen before a tenant is set on the request; stamp + save on their own.
+    private async Task AuthEventAsync(AuditChangeType type, User user, string reason, CancellationToken ct)
+    {
+        tenant.SetTenant(user.TenantId);
+        db.AuditLogs.Add(AuthLog(type, user, reason));
         await db.SaveChangesAsync(ct);
     }
 

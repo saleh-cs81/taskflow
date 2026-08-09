@@ -28,6 +28,7 @@ public class ExceptionHandlingMiddleware(
         {
             ValidationAppException v => (StatusCodes.Status400BadRequest, v.MessageKey, v.Errors),
             UnauthorizedAppException u => (StatusCodes.Status401Unauthorized, u.MessageKey, null),
+            ForbiddenAppException f => (StatusCodes.Status403Forbidden, f.MessageKey, null),
             NotFoundAppException n => (StatusCodes.Status404NotFound, n.MessageKey, null),
             ConflictAppException c => (StatusCodes.Status409Conflict, c.MessageKey, null),
             _ => (StatusCodes.Status500InternalServerError, "error.server", (IDictionary<string, string[]>?)null)

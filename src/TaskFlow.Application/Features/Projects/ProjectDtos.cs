@@ -43,15 +43,24 @@ public record ProjectDto(
     decimal? BudgetAmount,
     decimal? BudgetHours,
     string? Color,
+    long? DepartmentId,
     int MemberCount,
     DateTime CreatedAtUtc);
 
 public record AddProjectMemberRequest(long UserId, string? RoleInProject);
 public record ProjectMemberDto(long Id, long UserId, string FullName, string Email, string? RoleInProject);
 
+// A project a given user belongs to (for the "user's projects" view).
+public record UserProjectDto(long ProjectId, string Name, ProjectStatus Status, string? RoleInProject);
+
 public record CreateMilestoneRequest(string Name, DateTime? DueDate);
 public record UpdateMilestoneRequest(string Name, DateTime? DueDate, WorkStatus Status);
 public record MilestoneDto(long Id, long ProjectId, string Name, DateTime? DueDate, WorkStatus Status);
+
+// Project > Finance tab: budget vs actual.
+public record ProjectFinanceDto(
+    decimal? BudgetAmount, decimal? BudgetHours,
+    double ActualHours, double BillableHours, decimal ExpensesTotal, bool IsBillable);
 
 // Kanban board payload.
 public record BoardDto(long ProjectId, IReadOnlyList<BoardColumnDto> Columns);

@@ -39,5 +39,6 @@ public interface INotificationService
 public interface IActivityService
 {
     Task LogAsync(string action, string entityType, long entityId, CancellationToken ct = default);
-    Task<IReadOnlyList<ActivityDto>> GetFeedAsync(int take, CancellationToken ct = default);
+    // projectId filters the feed to that project + its tasks (activity rows aren't tagged with a project directly).
+    Task<IReadOnlyList<ActivityDto>> GetFeedAsync(int take, long? projectId = null, CancellationToken ct = default);
 }

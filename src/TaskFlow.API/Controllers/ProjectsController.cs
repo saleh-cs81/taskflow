@@ -15,17 +15,25 @@ namespace TaskFlow.API.Controllers;
 [Authorize]
 public class ProjectsController(
     IProjectService projects,
+    TaskFlow.Application.Features.Files.IFileService files,
     IValidator<CreateProjectRequest> createValidator,
     IValidator<UpdateProjectRequest> updateValidator,
     IValidator<CreateMilestoneRequest> milestoneValidator) : ControllerBase
 {
+    // All files anywhere in the project (project-level + on its tasks + task comments).
+    [HttpGet("{id:long}/files")]
+    [RequirePermission(Permissions.Projects.View)]
+    public async Task<ActionResult<IReadOnlyList<TaskFlow.Application.Features.Files.FileDto>>> Files(long id, CancellationToken ct)
+        => Ok(await files.ListForProjectAsync(id, ct));
+
     [HttpGet]
     [RequirePermission(Permissions.Projects.View)]
     public async Task<ActionResult<PagedResult<ProjectDto>>> List(
         [FromQuery] int page = 1, [FromQuery] int pageSize = 25,
         [FromQuery] ProjectStatus? status = null, [FromQuery] string? search = null,
+        [FromQuery] long? departmentId = null,
         CancellationToken ct = default)
-        => Ok(await projects.ListAsync(new PageQuery(page, pageSize), status, search, ct));
+        => Ok(await projects.ListAsync(new PageQuery(page, pageSize), status, search, departmentId, ct));
 
     [HttpGet("{id:long}")]
     [RequirePermission(Permissions.Projects.View)]
@@ -41,8 +49,9 @@ public class ProjectsController(
         return CreatedAtAction(nameof(Get), new { id = dto.Id }, dto);
     }
 
+    // Authorization is department-scoped inside the service (company admin, Projects.Update permission,
+    // or admin of the project's department) — see ProjectService.UpdateAsync.
     [HttpPut("{id:long}")]
-    [RequirePermission(Permissions.Projects.Update)]
     public async Task<ActionResult<ProjectDto>> Update(long id, UpdateProjectRequest request, CancellationToken ct)
     {
         await updateValidator.ValidateAndThrowAppAsync(request, ct);
@@ -57,6 +66,15 @@ public class ProjectsController(
         return NoContent();
     }
 
+    // Hard-delete the project and ALL of its data (tasks, files, milestones, discussions, time, members).
+    [HttpDelete("{id:long}/data")]
+    [RequirePermission(Permissions.Projects.Delete)]
+    public async Task<IActionResult> PurgeData(long id, CancellationToken ct)
+    {
+        await projects.PurgeAsync(id, ct);
+        return NoContent();
+    }
+
     // --- Members ---
 
     [HttpGet("{id:long}/members")]
@@ -64,18 +82,22 @@ public class ProjectsController(
     public async Task<ActionResult<IReadOnlyList<ProjectMemberDto>>> GetMembers(long id, CancellationToken ct)
         => Ok(await projects.GetMembersAsync(id, ct));
 
+    // Department-scoped: a department admin may add any user to their department's projects (checked in the service).
     [HttpPost("{id:long}/members")]
-    [RequirePermission(Permissions.Projects.Update)]
     public async Task<ActionResult<ProjectMemberDto>> AddMember(long id, AddProjectMemberRequest request, CancellationToken ct)
         => Ok(await projects.AddMemberAsync(id, request, ct));
 
     [HttpDelete("{id:long}/members/{userId:long}")]
-    [RequirePermission(Permissions.Projects.Update)]
     public async Task<IActionResult> RemoveMember(long id, long userId, CancellationToken ct)
     {
         await projects.RemoveMemberAsync(id, userId, ct);
         return NoContent();
     }
+
+    // --- Finance ---
+    [HttpGet("{id:long}/finance")]
+    [RequirePermission(Permissions.Projects.View)]
+    public async Task<ActionResult<ProjectFinanceDto>> Finance(long id, CancellationToken ct) => Ok(await projects.GetFinanceAsync(id, ct));
 
     // --- Milestones ---
 

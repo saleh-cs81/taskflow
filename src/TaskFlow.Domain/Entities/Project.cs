@@ -17,6 +17,7 @@ public class Project : TenantEntity
 
     public long? CategoryId { get; set; }
     public long? ClientId { get; set; }
+    public long? DepartmentId { get; set; }
 
     public ProjectStatus Status { get; set; } = ProjectStatus.Planned;
     public DateTime? StartDate { get; set; }

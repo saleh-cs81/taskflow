@@ -6,4 +6,5 @@ public interface ICurrentUser
     string? Email { get; }
     bool IsAuthenticated { get; }
     IReadOnlyCollection<string> Permissions { get; }
+    IReadOnlyCollection<string> Roles { get; }
 }

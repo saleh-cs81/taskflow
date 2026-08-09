@@ -14,6 +14,12 @@ public class UnauthorizedAppException(string messageKey) : Exception(messageKey)
     public string MessageKey { get; } = messageKey;
 }
 
+// Maps to 403 (authenticated but not allowed — must NOT be 401 or the client will try to refresh/log out).
+public class ForbiddenAppException(string messageKey) : Exception(messageKey)
+{
+    public string MessageKey { get; } = messageKey;
+}
+
 // Maps to 404.
 public class NotFoundAppException(string messageKey) : Exception(messageKey)
 {

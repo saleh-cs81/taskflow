@@ -37,6 +37,7 @@ public record MigrationErrorDto(
 public record MigrationProjectItemDto(
     long PaymoProjectId,
     string Name,
+    string? Code,
     MigrationProjectStatus Status,
     int RecordCount,
     string? ErrorMessage,
@@ -61,8 +62,11 @@ public interface IMigrationService : IMigrationExecutor
     // Staged migration: import only the next `count` not-yet-imported projects (count <= 0 => all remaining).
     Task<StartMigrationResult> StartBatchAsync(int count, CancellationToken ct = default);
 
-    // Migrate base/shared data only (users, clients, contacts, statuses, client-level financials).
+    // Step 1 — migrate users only (also builds the project catalog).
     Task<StartMigrationResult> StartUsersAsync(CancellationToken ct = default);
+
+    // Step 2 — migrate clients (+ contacts + client-level financials).
+    Task<StartMigrationResult> StartClientsAsync(CancellationToken ct = default);
 
     // Migrate one specific project, fully (self-contained).
     Task<StartMigrationResult> StartProjectAsync(long paymoProjectId, CancellationToken ct = default);

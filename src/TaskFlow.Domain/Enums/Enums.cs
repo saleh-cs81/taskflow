@@ -32,5 +32,10 @@ public enum AuditChangeType
 {
     Created = 0,
     Updated = 1,
-    Deleted = 2
+    Deleted = 2,
+    // Auth / session events (stored in the same AuditLog table; column is an int so adding values needs no migration).
+    Login = 3,
+    Logout = 4,
+    LoginFailed = 5,
+    PasswordChanged = 6
 }

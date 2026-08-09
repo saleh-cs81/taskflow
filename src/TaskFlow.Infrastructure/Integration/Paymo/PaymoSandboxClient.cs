@@ -31,8 +31,8 @@ public class PaymoSandboxClient : IPaymoClient
 
     private static readonly PaymoProject[] Projects =
     [
-        new(1001, "Marketing Site", "Company marketing website", true, 6001, 9001, "MKT", "#fb7029", 120m, true),
-        new(1002, "Mobile App", "iOS + Android app", true, 6002, 9002, "APP", "#3b82f6", 200m, false),
+        new(1001, "Marketing Site", "Company marketing website", true, 6001, 9001, "MKT", "#fb7029", 120m, true, [5001, 5002]),
+        new(1002, "Mobile App", "iOS + Android app", true, 6002, 9002, "APP", "#3b82f6", 200m, false, [5002]),
     ];
 
     private static readonly PaymoTaskList[] Lists =
@@ -49,7 +49,7 @@ public class PaymoSandboxClient : IPaymoClient
 
     private static readonly PaymoTask[] Tasks =
     [
-        new(3001, 1001, 2001, "Design landing page", "Hero + features", false, DateTime.UtcNow.AddDays(3), DateTime.UtcNow.AddDays(-1), null, 75, 1, "MKT-1", 30001, [5001], 70002),
+        new(3001, 1001, 2001, "Design landing page", "Hero + features", false, DateTime.UtcNow.AddDays(3), DateTime.UtcNow.AddDays(-1), null, 75, 1, "MKT-1", 30001, [5001], 70002, DateTime.UtcNow.AddDays(-30), DateTime.UtcNow.AddDays(-2)),
         new(3002, 1001, 2002, "Set up analytics", null, false, null, null, null, 50, 2, "MKT-2", 30002, [5002, 5001], 70001),
         new(3003, 1001, 2002, "Write copy", "Marketing copy", true, null, null, DateTime.UtcNow.AddDays(-2), 25, 3, "MKT-3", 30003, [5001], 70004),
         new(3004, 1002, 2003, "Auth screens", "Login + signup", false, null, null, null, 100, 1, "APP-1", 30004, [5002], 70003),

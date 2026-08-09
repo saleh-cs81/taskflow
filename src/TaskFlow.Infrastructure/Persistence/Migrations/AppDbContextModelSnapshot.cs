@@ -483,6 +483,10 @@ namespace TaskFlow.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
+                    b.Property<string>("CodePrefix")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
@@ -521,6 +525,55 @@ namespace TaskFlow.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Departments", (string)null);
+                });
+
+            modelBuilder.Entity("TaskFlow.Domain.Entities.DepartmentAdmin", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long?>("CreatedById")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("DeletedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long?>("DeletedById")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("DepartmentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<byte[]>("RowVersion")
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<long>("TenantId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long?>("UpdatedById")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DepartmentId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("DepartmentAdmins", (string)null);
                 });
 
             modelBuilder.Entity("TaskFlow.Domain.Entities.Discussion", b =>
@@ -1448,6 +1501,9 @@ namespace TaskFlow.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
+                    b.Property<string>("Code")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
@@ -1835,6 +1891,9 @@ namespace TaskFlow.Infrastructure.Persistence.Migrations
                         .HasColumnType("datetime2");
 
                     b.Property<long?>("DeletedById")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("DepartmentId")
                         .HasColumnType("bigint");
 
                     b.Property<string>("Description")
@@ -2979,6 +3038,17 @@ namespace TaskFlow.Infrastructure.Persistence.Migrations
                     b.Navigation("Client");
                 });
 
+            modelBuilder.Entity("TaskFlow.Domain.Entities.DepartmentAdmin", b =>
+                {
+                    b.HasOne("TaskFlow.Domain.Entities.Department", "Department")
+                        .WithMany("Admins")
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Department");
+                });
+
             modelBuilder.Entity("TaskFlow.Domain.Entities.DiscussionPost", b =>
                 {
                     b.HasOne("TaskFlow.Domain.Entities.Discussion", "Discussion")
@@ -3354,6 +3424,11 @@ namespace TaskFlow.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("TaskFlow.Domain.Entities.Client", b =>
                 {
                     b.Navigation("Contacts");
+                });
+
+            modelBuilder.Entity("TaskFlow.Domain.Entities.Department", b =>
+                {
+                    b.Navigation("Admins");
                 });
 
             modelBuilder.Entity("TaskFlow.Domain.Entities.Discussion", b =>

@@ -6,6 +6,8 @@ namespace TaskFlow.Application.Features.Tasks;
 public interface ITaskService
 {
     Task<PagedResult<TaskDto>> ListAsync(long projectId, PageQuery page, WorkStatus? status, long? assigneeId, CancellationToken ct = default);
+    // Open tasks assigned to the current user across all projects (for the Home hub).
+    Task<IReadOnlyList<AssignedTaskDto>> ListMineAsync(bool includeDone = false, CancellationToken ct = default);
     Task<TaskDto> GetAsync(long id, CancellationToken ct = default);
     Task<TaskDto> CreateAsync(CreateTaskRequest request, CancellationToken ct = default);
     Task<TaskDto> UpdateAsync(long id, UpdateTaskRequest request, CancellationToken ct = default);

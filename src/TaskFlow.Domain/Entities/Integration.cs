@@ -37,6 +37,7 @@ public class MigrationProjectItem : TenantEntity
 {
     public long PaymoProjectId { get; set; }
     public string Name { get; set; } = string.Empty;
+    public string? Code { get; set; }                  // Paymo project code -> used to bucket by department prefix
     public int Seq { get; set; }                       // order from Paymo's project list
     public MigrationProjectStatus Status { get; set; } = MigrationProjectStatus.Pending;
     public long? LocalProjectId { get; set; }

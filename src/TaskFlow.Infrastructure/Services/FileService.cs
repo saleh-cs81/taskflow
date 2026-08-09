@@ -49,6 +49,39 @@ public class FileService(IAppDbContext db, IFileStorage storage, ITenantContext 
             .Select(f => new FileDto(f.Id, f.TargetType, f.TargetId, f.FileName, f.ContentType, f.SizeBytes, f.Version, f.CreatedById, f.CreatedAtUtc))
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<ProjectFileDto>> ListForProjectAsync(long projectId, CancellationToken ct = default)
+    {
+        // Task title lookup for the whole project, so every file can be tagged with its task.
+        var tasks = await db.Tasks.AsNoTracking().Where(t => t.ProjectId == projectId)
+            .Select(t => new { t.Id, t.Title }).ToListAsync(ct);
+        var taskTitle = tasks.ToDictionary(t => t.Id, t => t.Title);
+        var taskIds = taskTitle.Keys.ToList();
+
+        // A file on a task comment still belongs to that comment's task.
+        var comments = await db.Comments.AsNoTracking()
+            .Where(c => c.TargetType == CommentTargetType.Task && taskIds.Contains(c.TargetId))
+            .Select(c => new { c.Id, c.TargetId }).ToListAsync(ct);
+        var commentToTask = comments.ToDictionary(c => c.Id, c => c.TargetId);
+        var commentIds = commentToTask.Keys.ToList();
+
+        var files = await db.Files.AsNoTracking()
+            .Where(f => (f.TargetType == AttachmentTargetType.Project && f.TargetId == projectId)
+                     || (f.TargetType == AttachmentTargetType.Task && taskIds.Contains(f.TargetId))
+                     || (f.TargetType == AttachmentTargetType.Comment && commentIds.Contains(f.TargetId)))
+            .OrderByDescending(f => f.CreatedAtUtc)
+            .Select(f => new { f.Id, f.TargetType, f.TargetId, f.FileName, f.ContentType, f.SizeBytes, f.CreatedAtUtc })
+            .ToListAsync(ct);
+
+        return files.Select(f =>
+        {
+            long? taskId = f.TargetType == AttachmentTargetType.Task ? f.TargetId
+                         : f.TargetType == AttachmentTargetType.Comment && commentToTask.TryGetValue(f.TargetId, out var tk) ? tk
+                         : (long?)null;
+            var title = taskId is { } id && taskTitle.TryGetValue(id, out var t) ? t : null;
+            return new ProjectFileDto(f.Id, f.TargetType, f.TargetId, f.FileName, f.ContentType, f.SizeBytes, taskId, title, f.CreatedAtUtc);
+        }).ToList();
+    }
+
     public async Task<FileDownload> DownloadAsync(long id, CancellationToken ct = default)
     {
         var file = await db.Files.AsNoTracking().FirstOrDefaultAsync(f => f.Id == id, ct)

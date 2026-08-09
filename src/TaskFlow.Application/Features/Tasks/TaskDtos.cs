@@ -53,6 +53,18 @@ public record TaskDto(
     int ChecklistTotal,
     int ChecklistDone,
     int SubtaskCount,
+    DateTime CreatedAtUtc,
+    DateTime? UpdatedAtUtc);
+
+// A task assigned to the current user, carrying its project name for the "My Day"/"My Tasks" home views.
+public record AssignedTaskDto(
+    long Id,
+    long ProjectId,
+    string ProjectName,
+    string Title,
+    WorkStatus Status,
+    TaskPriority Priority,
+    DateTime? DueDate,
     DateTime CreatedAtUtc);
 
 public record CreateTaskListRequest(long ProjectId, string Name);

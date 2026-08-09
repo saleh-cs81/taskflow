@@ -7,7 +7,8 @@ public record PaymoClientContact(long Id, long ClientId, string Name, string? Em
 public record PaymoProjectStatus(long Id, string Name);
 public record PaymoProject(
     long Id, string Name, string? Description, bool Active,
-    long? ClientId, long? StatusId, string? Code, string? Color, decimal? BudgetHours, bool Billable);
+    long? ClientId, long? StatusId, string? Code, string? Color, decimal? BudgetHours, bool Billable,
+    IReadOnlyList<long> MemberUserIds);
 public record PaymoTaskList(long Id, long ProjectId, string Name, int Seq, long? MilestoneId);
 public record PaymoMilestone(long Id, long ProjectId, string Name, DateTime? DueDate, bool Complete);
 // AssigneeUserIds = all ids from Paymo task 'users'; first is treated as primary. Priority = Paymo 100/75/50/25.
@@ -15,7 +16,8 @@ public record PaymoMilestone(long Id, long ProjectId, string Name, DateTime? Due
 public record PaymoTask(
     long Id, long ProjectId, long? TaskListId, string Name, string? Description, bool Complete,
     DateTime? DueDate, DateTime? StartDate, DateTime? CompletedOn, int Priority, int Seq, string? Code,
-    long? ThreadId, IReadOnlyList<long> AssigneeUserIds, long? StatusId);
+    long? ThreadId, IReadOnlyList<long> AssigneeUserIds, long? StatusId,
+    DateTime? CreatedOn = null, DateTime? UpdatedOn = null);
 public record PaymoSubtask(long Id, long TaskId, string Name, bool Complete, int Seq);
 public record PaymoDiscussion(long Id, long ProjectId, string Name, string? Description, long? ThreadId, long? UserId);
 public record PaymoComment(long Id, long? ThreadId, string Content, long? UserId, DateTime? CreatedOn);

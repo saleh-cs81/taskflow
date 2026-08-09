@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TaskFlow.Application.Common.Interfaces;
 using TaskFlow.Application.Features.Integration;
+using TaskFlow.Infrastructure.Persistence.Interceptors;
 
 namespace TaskFlow.Infrastructure.Integration.Paymo;
 
@@ -21,7 +22,10 @@ public class MigrationBackgroundService(
             {
                 using var scope = scopeFactory.CreateScope();
                 var svc = (IMigrationExecutor)scope.ServiceProvider.GetRequiredService<IMigrationService>();
-                await svc.ExecuteAsync(item, stoppingToken);
+                // Don't write a per-row audit trail for the bulk import (it would add
+                // hundreds of thousands of AuditLog rows). The migration is itself the record.
+                using (AuditScope.Suppress())
+                    await svc.ExecuteAsync(item, stoppingToken);
             }
             catch (Exception ex)
             {

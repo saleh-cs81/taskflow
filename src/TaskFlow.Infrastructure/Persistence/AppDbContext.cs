@@ -54,6 +54,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<ClientContact> ClientContacts => Set<ClientContact>();
     public DbSet<TaskAssignee> TaskAssignees => Set<TaskAssignee>();
     public DbSet<Department> Departments => Set<Department>();
+    public DbSet<DepartmentAdmin> DepartmentAdmins => Set<DepartmentAdmin>();
     public DbSet<Discussion> Discussions => Set<Discussion>();
     public DbSet<DiscussionPost> DiscussionPosts => Set<DiscussionPost>();
 
@@ -185,6 +186,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         {
             b.ToTable("Departments");
             b.Property(x => x.Name).HasMaxLength(150).IsRequired();
+            b.Property(x => x.CodePrefix).HasMaxLength(30);
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+        modelBuilder.Entity<DepartmentAdmin>(b =>
+        {
+            b.ToTable("DepartmentAdmins");
+            b.HasIndex(x => new { x.DepartmentId, x.UserId }).IsUnique();
+            b.HasOne(x => x.Department).WithMany(d => d.Admins).HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.Cascade);
             b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
         });
         modelBuilder.Entity<Discussion>(b =>

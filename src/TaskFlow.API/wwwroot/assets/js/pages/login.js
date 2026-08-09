@@ -1,6 +1,6 @@
 (async function () {
   await I18N.load();
-  if (API.accessToken) { location.href = '/dashboard.html'; return; }
+  if (API.accessToken) { location.href = '/home.html'; return; }
 
   const err = document.getElementById('errorBox');
   const showError = (msg) => { err.textContent = msg; err.classList.remove('d-none'); };
@@ -25,7 +25,7 @@
     e.preventDefault(); clearError();
     try {
       await Auth.login(document.getElementById('loginEmail').value, document.getElementById('loginPassword').value);
-      location.href = '/dashboard.html';
+      location.href = '/home.html';
     } catch (ex) { showError(ex.problem?.title || I18N.t('login.error')); }
   };
 
@@ -37,7 +37,7 @@
         document.getElementById('regName').value,
         document.getElementById('regEmail').value,
         document.getElementById('regPassword').value);
-      location.href = '/dashboard.html';
+      location.href = '/home.html';
     } catch (ex) { showError(ex.problem?.title || I18N.t('common.error')); }
   };
 })();

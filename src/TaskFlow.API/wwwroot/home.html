@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TaskFlow</title>
+  <link id="bootstrap-css" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/assets/css/app.css?v=20260706o">
+</head>
+<body>
+  <div id="navbar"></div>
+
+  <div class="container py-4">
+    <h3 class="mb-3"><span data-i18n="home.title"></span>, <span id="userName"></span></h3>
+
+    <ul class="nav nav-tabs mb-3" id="homeTabs">
+      <li class="nav-item"><button class="nav-link active" data-tab="myday" data-i18n="home.myday"></button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="mytasks" data-i18n="home.mytasks"></button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="team" data-i18n="home.team"></button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="dashboard" data-i18n="home.dashboard"></button></li>
+    </ul>
+
+    <!-- My Day -->
+    <section class="tab-pane" data-pane="myday">
+      <div class="card shadow-sm"><div class="card-body">
+        <h5 class="mb-3"><i class="bi bi-sun"></i> <span data-i18n="home.myday"></span> <span class="text-muted small" id="mydayDate"></span></h5>
+        <div id="mydayList"></div>
+      </div></div>
+    </section>
+
+    <!-- My Tasks (grouped by project) -->
+    <section class="tab-pane d-none" data-pane="mytasks">
+      <div id="mytasksGroups"></div>
+    </section>
+
+    <!-- Team's Tasks (calendar of assignments) -->
+    <section class="tab-pane d-none" data-pane="team">
+      <div class="card shadow-sm"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="mb-0"><i class="bi bi-people"></i> <span data-i18n="home.team"></span></h5>
+          <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-secondary" id="teamPrev">&lsaquo;</button>
+            <button class="btn btn-outline-secondary" id="teamLabel" disabled></button>
+            <button class="btn btn-outline-secondary" id="teamNext">&rsaquo;</button>
+          </div>
+        </div>
+        <div id="teamList"></div>
+      </div></div>
+    </section>
+
+    <!-- Dashboard -->
+    <section class="tab-pane d-none" data-pane="dashboard">
+      <div class="row g-3 mb-3" id="statCards"></div>
+      <div class="row g-4">
+        <div class="col-md-5">
+          <div class="card shadow-sm"><div class="card-body">
+            <h5 data-i18n="dash.timer"></h5>
+            <div id="timerStatus" class="mb-2 text-muted" data-i18n="dash.noTimer"></div>
+            <div class="d-flex gap-2">
+              <select class="form-select form-select-sm" id="timerProject"></select>
+              <button class="btn btn-success btn-sm" id="startBtn" data-i18n="dash.start"></button>
+              <button class="btn btn-danger btn-sm d-none" id="stopBtn" data-i18n="dash.stop"></button>
+            </div>
+          </div></div>
+        </div>
+        <div class="col-md-7">
+          <div class="card shadow-sm"><div class="card-body">
+            <h5 data-i18n="dash.activity"></h5>
+            <ul class="list-group list-group-flush" id="activityList"></ul>
+          </div></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/assets/js/core/i18n.js?v=20260706o"></script>
+  <script src="/assets/js/core/api.js?v=20260706o"></script>
+  <script src="/assets/js/core/auth.js?v=20260706o"></script>
+  <script src="/assets/js/core/realtime.js?v=20260706o"></script>
+  <script src="/assets/js/core/ui.js?v=20260706o"></script>
+  <script src="/assets/js/pages/home.js?v=20260706o"></script>
+</body>
+</html>

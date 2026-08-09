@@ -26,4 +26,7 @@ public class CurrentUser(IHttpContextAccessor accessor) : ICurrentUser
 
     public IReadOnlyCollection<string> Permissions =>
         Principal?.FindAll(JwtService.PermissionClaim).Select(c => c.Value).ToArray() ?? [];
+
+    public IReadOnlyCollection<string> Roles =>
+        Principal?.FindAll(ClaimTypes.Role).Select(c => c.Value).ToArray() ?? [];
 }

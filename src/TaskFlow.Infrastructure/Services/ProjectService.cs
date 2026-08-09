@@ -8,14 +8,23 @@ using TaskFlow.Domain.Enums;
 
 namespace TaskFlow.Infrastructure.Services;
 
-public class ProjectService(IAppDbContext db) : IProjectService
+public class ProjectService(IAppDbContext db, IDepartmentAccess access) : IProjectService
 {
-    public async Task<PagedResult<ProjectDto>> ListAsync(PageQuery page, ProjectStatus? status, string? search, CancellationToken ct = default)
+    public async Task<PagedResult<ProjectDto>> ListAsync(PageQuery page, ProjectStatus? status, string? search, long? departmentId, CancellationToken ct = default)
     {
         var query = db.Projects.AsNoTracking();
         if (status is not null) query = query.Where(p => p.Status == status);
         if (!string.IsNullOrWhiteSpace(search))
             query = query.Where(p => p.Name.Contains(search) || (p.Code != null && p.Code.Contains(search)));
+        if (departmentId is not null) query = query.Where(p => p.DepartmentId == departmentId);
+
+        // Department scoping: company admins see all; a department admin sees only their departments'
+        // projects. A user who administers no department is unrestricted (unchanged behaviour).
+        if (!access.IsCompanyAdmin)
+        {
+            var mine = await access.MyDepartmentIdsAsync(ct);
+            if (mine.Count > 0) query = query.Where(p => p.DepartmentId != null && mine.Contains(p.DepartmentId.Value));
+        }
 
         var total = await query.CountAsync(ct);
         var items = await query
@@ -52,7 +61,8 @@ public class ProjectService(IAppDbContext db) : IProjectService
             IsBillable = r.IsBillable,
             BudgetAmount = r.BudgetAmount,
             BudgetHours = r.BudgetHours,
-            Color = r.Color
+            Color = r.Color,
+            DepartmentId = await ResolveDeptAsync(r.Code?.Trim(), ct)
         };
         db.Projects.Add(project);
         await db.SaveChangesAsync(ct);
@@ -69,6 +79,8 @@ public class ProjectService(IAppDbContext db) : IProjectService
 
     public async Task<ProjectDto> UpdateAsync(long id, UpdateProjectRequest r, CancellationToken ct = default)
     {
+        if (!await access.CanManageProjectAsync(id, ct)) throw new ForbiddenAppException("error.forbidden");
+
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id, ct)
             ?? throw new NotFoundAppException("error.not_found");
 
@@ -84,6 +96,7 @@ public class ProjectService(IAppDbContext db) : IProjectService
         project.BudgetAmount = r.BudgetAmount;
         project.BudgetHours = r.BudgetHours;
         project.Color = r.Color;
+        project.DepartmentId = await ResolveDeptAsync(project.Code, ct);
         await db.SaveChangesAsync(ct);
 
         var memberCount = await db.ProjectMembers.CountAsync(m => m.ProjectId == id, ct);
@@ -98,15 +111,79 @@ public class ProjectService(IAppDbContext db) : IProjectService
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task PurgeAsync(long id, CancellationToken ct = default)
+    {
+        // Tenant-scoped check (the query filter enforces the project belongs to the caller's tenant).
+        if (!await db.Projects.AnyAsync(p => p.Id == id, ct))
+            throw new NotFoundAppException("error.not_found");
+
+        // One atomic batch. Enum values: File TargetType Task=0/Project=1/Comment=2; Comment TargetType Task=0.
+        // Uses set-based subqueries (not EF `List.Contains`, which fails to translate for large projects) so it
+        // scales to any size; SET XACT_ABORT ON auto-rolls-back on any error (no partial deletes).
+        const string sql = @"
+SET XACT_ABORT ON;
+BEGIN TRAN;
+DECLARE @p BIGINT = {0};
+DECLARE @tasks TABLE(Id BIGINT PRIMARY KEY); INSERT @tasks SELECT Id FROM Tasks WHERE ProjectId=@p;
+DECLARE @lists TABLE(Id BIGINT PRIMARY KEY); INSERT @lists SELECT Id FROM TaskLists WHERE ProjectId=@p;
+DECLARE @miles TABLE(Id BIGINT PRIMARY KEY); INSERT @miles SELECT Id FROM Milestones WHERE ProjectId=@p;
+DECLARE @books TABLE(Id BIGINT PRIMARY KEY); INSERT @books SELECT Id FROM Bookings WHERE ProjectId=@p;
+DECLARE @entries TABLE(Id BIGINT PRIMARY KEY); INSERT @entries SELECT Id FROM TimeEntries WHERE ProjectId=@p;
+DECLARE @discs TABLE(Id BIGINT PRIMARY KEY); INSERT @discs SELECT Id FROM Discussions WHERE ProjectId=@p;
+DECLARE @cmts TABLE(Id BIGINT PRIMARY KEY); INSERT @cmts SELECT Id FROM Comments WHERE TargetType=0 AND TargetId IN (SELECT Id FROM @tasks);
+DECLARE @files TABLE(Id BIGINT PRIMARY KEY); INSERT @files SELECT Id FROM Files
+    WHERE (TargetType=1 AND TargetId=@p) OR (TargetType=0 AND TargetId IN (SELECT Id FROM @tasks)) OR (TargetType=2 AND TargetId IN (SELECT Id FROM @cmts));
+
+DELETE FROM Bookings WHERE ProjectId=@p;
+DELETE FROM Files WHERE Id IN (SELECT Id FROM @files);
+DELETE FROM TimeEntries WHERE ProjectId=@p;
+DELETE FROM ChecklistItems WHERE TaskId IN (SELECT Id FROM @tasks);
+DELETE FROM TaskWatchers WHERE TaskId IN (SELECT Id FROM @tasks);
+DELETE FROM TaskTags WHERE TaskId IN (SELECT Id FROM @tasks);
+DELETE FROM TaskDependencies WHERE PredecessorTaskId IN (SELECT Id FROM @tasks) OR SuccessorTaskId IN (SELECT Id FROM @tasks);
+DELETE FROM TaskAssignees WHERE TaskId IN (SELECT Id FROM @tasks);
+DELETE FROM Comments WHERE Id IN (SELECT Id FROM @cmts);
+DELETE FROM DiscussionPosts WHERE DiscussionId IN (SELECT Id FROM @discs);
+DELETE FROM Discussions WHERE ProjectId=@p;
+UPDATE Tasks SET ParentTaskId=NULL WHERE ProjectId=@p;
+DELETE FROM Tasks WHERE ProjectId=@p;
+DELETE FROM TaskLists WHERE ProjectId=@p;
+DELETE FROM Milestones WHERE ProjectId=@p;
+DELETE FROM ProjectMembers WHERE ProjectId=@p;
+DELETE FROM Projects WHERE Id=@p;
+
+DELETE FROM EntityMappings WHERE (EntityType='Project' AND LocalId=@p)
+    OR (EntityType IN ('Task','TaskThread') AND LocalId IN (SELECT Id FROM @tasks))
+    OR (EntityType='TaskList' AND LocalId IN (SELECT Id FROM @lists))
+    OR (EntityType='Milestone' AND LocalId IN (SELECT Id FROM @miles))
+    OR (EntityType='Booking' AND LocalId IN (SELECT Id FROM @books))
+    OR (EntityType='TimeEntry' AND LocalId IN (SELECT Id FROM @entries))
+    OR (EntityType='Comment' AND LocalId IN (SELECT Id FROM @cmts))
+    OR (EntityType='File' AND LocalId IN (SELECT Id FROM @files))
+    OR (EntityType='Discussion' AND LocalId IN (SELECT Id FROM @discs));
+
+UPDATE MigrationProjectItems SET Status=0, LocalProjectId=NULL, RecordCount=0, ImportedAtUtc=NULL, ErrorMessage=NULL WHERE LocalProjectId=@p;
+COMMIT;";
+        await db.Database.ExecuteSqlRawAsync(sql, new object[] { id }, ct);
+    }
+
     public async Task<IReadOnlyList<ProjectMemberDto>> GetMembersAsync(long projectId, CancellationToken ct = default)
         => await db.ProjectMembers.AsNoTracking()
             .Where(m => m.ProjectId == projectId)
             .Select(m => new ProjectMemberDto(m.Id, m.UserId, m.User.FullName, m.User.Email, m.RoleInProject))
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<UserProjectDto>> ListForUserAsync(long userId, CancellationToken ct = default)
+        => await db.ProjectMembers.AsNoTracking()
+            .Where(m => m.UserId == userId)
+            .OrderBy(m => m.Project.Name)
+            .Select(m => new UserProjectDto(m.ProjectId, m.Project.Name, m.Project.Status, m.RoleInProject))
+            .ToListAsync(ct);
+
     public async Task<ProjectMemberDto> AddMemberAsync(long projectId, AddProjectMemberRequest r, CancellationToken ct = default)
     {
         await EnsureProjectExists(projectId, ct);
+        if (!await access.CanManageProjectAsync(projectId, ct)) throw new ForbiddenAppException("error.forbidden");
 
         if (await db.ProjectMembers.AnyAsync(m => m.ProjectId == projectId && m.UserId == r.UserId, ct))
             throw new ConflictAppException("error.conflict");
@@ -123,6 +200,7 @@ public class ProjectService(IAppDbContext db) : IProjectService
 
     public async Task RemoveMemberAsync(long projectId, long userId, CancellationToken ct = default)
     {
+        if (!await access.CanManageProjectAsync(projectId, ct)) throw new ForbiddenAppException("error.forbidden");
         var member = await db.ProjectMembers.FirstOrDefaultAsync(m => m.ProjectId == projectId && m.UserId == userId, ct)
             ?? throw new NotFoundAppException("error.not_found");
         db.ProjectMembers.Remove(member);
@@ -182,14 +260,37 @@ public class ProjectService(IAppDbContext db) : IProjectService
         return new BoardDto(projectId, columns);
     }
 
+    public async Task<ProjectFinanceDto> GetFinanceAsync(long projectId, CancellationToken ct = default)
+    {
+        var p = await db.Projects.AsNoTracking().FirstOrDefaultAsync(x => x.Id == projectId, ct)
+            ?? throw new NotFoundAppException("error.not_found");
+        var totalSecs = await db.TimeEntries.AsNoTracking().Where(t => t.ProjectId == projectId).SumAsync(t => (long?)t.DurationSeconds, ct) ?? 0;
+        var billableSecs = await db.TimeEntries.AsNoTracking().Where(t => t.ProjectId == projectId && t.IsBillable).SumAsync(t => (long?)t.DurationSeconds, ct) ?? 0;
+        var expenses = await db.Expenses.AsNoTracking().Where(e => e.ProjectId == projectId).SumAsync(e => (decimal?)e.Amount, ct) ?? 0m;
+        return new ProjectFinanceDto(p.BudgetAmount, p.BudgetHours,
+            Math.Round(totalSecs / 3600.0, 1), Math.Round(billableSecs / 3600.0, 1), expenses, p.IsBillable);
+    }
+
     private async Task EnsureProjectExists(long projectId, CancellationToken ct)
     {
         if (!await db.Projects.AnyAsync(p => p.Id == projectId, ct))
             throw new NotFoundAppException("error.not_found");
     }
 
+    // Department for a project code: longest matching CodePrefix; none/no-code -> catch-all (empty prefix) dept.
+    private async Task<long?> ResolveDeptAsync(string? code, CancellationToken ct)
+    {
+        var depts = await db.Departments.AsNoTracking().Select(d => new { d.Id, d.CodePrefix }).ToListAsync(ct);
+        long? catchAll = depts.Where(d => string.IsNullOrEmpty(d.CodePrefix)).Select(d => (long?)d.Id).FirstOrDefault();
+        if (string.IsNullOrEmpty(code)) return catchAll;
+        var match = depts.Where(d => !string.IsNullOrEmpty(d.CodePrefix))
+            .OrderByDescending(d => d.CodePrefix!.Length)
+            .FirstOrDefault(d => code.StartsWith(d.CodePrefix!, StringComparison.OrdinalIgnoreCase));
+        return match?.Id ?? catchAll;
+    }
+
     private static ProjectDto ToDto(Project p, int memberCount) => new(
         p.Id, p.Name, p.Code, p.Description, p.CategoryId, p.ClientId, p.Status,
         p.StartDate, p.DueDate, p.IsBillable, p.BudgetAmount, p.BudgetHours, p.Color,
-        memberCount, p.CreatedAtUtc);
+        p.DepartmentId, memberCount, p.CreatedAtUtc);
 }

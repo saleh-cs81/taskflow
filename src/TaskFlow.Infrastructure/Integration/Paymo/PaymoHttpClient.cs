@@ -65,7 +65,8 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
         return Parse(root, "projects", el => new PaymoProject(
             GetLong(el, "id"), GetString(el, "name") ?? "", GetString(el, "description"), GetBool(el, "active"),
             GetNullableLong(el, "client_id"), GetNullableLong(el, "status_id"), GetString(el, "code"),
-            GetString(el, "color"), GetNullableDecimal(el, "budget_hours"), GetBool(el, "billable")));
+            GetString(el, "color"), GetNullableDecimal(el, "budget_hours"), GetBool(el, "billable"),
+            AllUserIds(el, "users")));   // project members (Paymo "users" array)
     }
 
     public async Task<IReadOnlyList<PaymoTaskList>> GetTaskListsAsync(string apiKey, long paymoProjectId, CancellationToken ct = default)
@@ -92,7 +93,8 @@ public class PaymoHttpClient(HttpClient http, ILogger<PaymoHttpClient> logger) :
             GetString(el, "name") ?? "", GetString(el, "description"), GetBool(el, "complete"),
             GetDate(el, "due_date"), GetDate(el, "start_date"), GetDate(el, "completed_on"),
             GetInt(el, "priority"), GetInt(el, "seq"), GetString(el, "code"),
-            GetNullableLong(el, "thread_id"), AllUserIds(el, "users"), GetNullableLong(el, "status_id")));
+            GetNullableLong(el, "thread_id"), AllUserIds(el, "users"), GetNullableLong(el, "status_id"),
+            GetDate(el, "created_on"), GetDate(el, "updated_on")));
     }
 
     public async Task<IReadOnlyList<PaymoSubtask>> GetSubtasksAsync(string apiKey, CancellationToken ct = default)

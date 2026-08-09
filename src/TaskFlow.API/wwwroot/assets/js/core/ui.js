@@ -22,13 +22,24 @@ const UI = {
 
     el.innerHTML = `
       <aside class="app-sidebar" id="appSidebar">
-        <a class="brand" href="/dashboard.html">
+        <a class="brand" href="/home.html">
           <span class="logo">T</span><span data-i18n="app.name">${I18N.t('app.name')}</span>
         </a>
 
-        ${link('home', '/dashboard.html', 'bi-house', 'nav.home')}
+        <div class="nav-group" data-group="home">
+          <button class="nav-group-toggle"><i class="bi bi-house"></i>
+            <span data-i18n="nav.home">${I18N.t('nav.home')}</span><i class="bi bi-chevron-down caret"></i></button>
+          <div class="nav-group-items">
+            ${link('home', '/home.html?tab=myday', 'bi-sun', 'home.myday')}
+            ${link('mytasks', '/home.html?tab=mytasks', 'bi-check2-square', 'home.mytasks')}
+            ${link('team', '/home.html?tab=team', 'bi-people', 'home.team')}
+            ${link('dashboard', '/home.html?tab=dashboard', 'bi-speedometer2', 'home.dashboard')}
+          </div>
+        </div>
+
         ${link('clients', '/clients.html', 'bi-people', 'nav.clients')}
         ${link('projects', '/projects.html', 'bi-folder', 'nav.projects')}
+        ${link('departments', '/departments.html', 'bi-diagram-3', 'nav.departments')}
         ${link('board', '/board.html', 'bi-kanban', 'nav.board')}
         ${link('calendar', '/calendar.html', 'bi-calendar3', 'nav.calendar')}
 
@@ -37,23 +48,15 @@ const UI = {
             <span data-i18n="nav.people">${I18N.t('nav.people')}</span><i class="bi bi-chevron-down caret"></i></button>
           <div class="nav-group-items">
             ${link('users', '/team.html', 'bi-person', 'nav.users')}
+            ${link('guests', '/guests.html', 'bi-person-vcard', 'nav.guests')}
             ${link('scheduling', '/scheduling.html', 'bi-calendar-week', 'nav.scheduling')}
           </div>
         </div>
 
-        <div class="nav-group" data-group="accounting">
-          <button class="nav-group-toggle"><i class="bi bi-wallet2"></i>
-            <span data-i18n="nav.accounting">${I18N.t('nav.accounting')}</span><i class="bi bi-chevron-down caret"></i></button>
-          <div class="nav-group-items">
-            ${link('invoices', '/invoices.html', 'bi-receipt', 'nav.invoices')}
-            ${link('estimates', '/estimates.html', 'bi-file-earmark-text', 'nav.estimates')}
-            ${link('expenses', '/expenses.html', 'bi-cash-stack', 'nav.expenses')}
-            ${link('recurring', '/recurring.html', 'bi-arrow-repeat', 'nav.recurring')}
-          </div>
-        </div>
-
+        ${link('recurring', '/recurring.html', 'bi-arrow-repeat', 'nav.recurring')}
         ${link('reports', '/reports.html', 'bi-graph-up', 'nav.reports')}
         ${link('timesheets', '/timesheets.html', 'bi-clock-history', 'nav.timesheets')}
+        ${link('audit', '/audit.html', 'bi-card-list', 'nav.audit')}
         ${link('integration', '/integration.html', 'bi-plug', 'nav.integration')}
         ${link('billing', '/billing.html', 'bi-credit-card', 'nav.billing')}
 
@@ -159,6 +162,40 @@ const UI = {
   },
 
   esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+,
+  // Initials from a display name (max 2 letters), e.g. "Saleh Odeh" -> "SO".
+  initials(name) {
+    const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return '?';
+    return parts.map(s => s[0]).slice(0, 2).join('').toUpperCase();
+  },
+  // Deterministic avatar colour bucket (c0..c7) from a stable seed (id/email/name).
+  avColor(seed) {
+    const s = String(seed ?? '');
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return 'c' + (h % 8);
+  },
+  // Ready-to-inject coloured initials avatar. size: '' | 'lg' | 'sm'.
+  avatar(name, seed, size) {
+    return `<span class="av ${size ? 'av-' + size : ''} ${this.avColor(seed ?? name)}">${this.esc(this.initials(name))}</span>`;
+  }
+,
+  // Render rich HTML (e.g. Paymo task descriptions) safely: strip scripts, event handlers and js: urls.
+  safeHtml(html) {
+    const t = document.createElement('template');
+    t.innerHTML = html || '';
+    t.content.querySelectorAll('script,style,iframe,object,embed,link,meta,form').forEach(e => e.remove());
+    t.content.querySelectorAll('*').forEach(el => {
+      [...el.attributes].forEach(a => {
+        const n = a.name.toLowerCase();
+        if (n.startsWith('on')) el.removeAttribute(a.name);
+        if ((n === 'href' || n === 'src') && /^\s*javascript:/i.test(a.value)) el.removeAttribute(a.name);
+      });
+      if (el.tagName === 'A') { el.setAttribute('target', '_blank'); el.setAttribute('rel', 'noopener noreferrer'); }
+    });
+    return t.innerHTML;
+  }
 };
 
 window.UI = UI;

@@ -19,6 +19,7 @@
   const migrateBatchBtn = document.getElementById('migrateBatchBtn');
   const refreshCatalogBtn = document.getElementById('refreshCatalogBtn');
   const migrateUsersBtn = document.getElementById('migrateUsersBtn');
+  const migrateClientsBtn = document.getElementById('migrateClientsBtn');
   const stopBtn = document.getElementById('stopBtn');
 
   const RUNNING = s => s === 0 || s === 1; // Pending or Running
@@ -95,6 +96,7 @@
     runFull.disabled = isRunning; runSync.disabled = isRunning; resetBtn.disabled = isRunning;
     if (migrateBatchBtn) migrateBatchBtn.disabled = isRunning;
     if (migrateUsersBtn) migrateUsersBtn.disabled = isRunning;
+    if (migrateClientsBtn) migrateClientsBtn.disabled = isRunning;
     if (stopBtn) stopBtn.disabled = !isRunning;   // Stop only enabled while a run is active
     document.querySelectorAll('.mig-one').forEach(b => b.disabled = isRunning);
   }
@@ -169,7 +171,8 @@
     const n = Math.max(1, parseInt(batchSize.value, 10) || 10);
     return startRun(`/integrations/paymo/migrate-batch?count=${n}`);
   };
-  migrateUsersBtn.onclick = () => startRun('/integrations/paymo/migrate-users');
+  if (migrateUsersBtn) migrateUsersBtn.onclick = () => startRun('/integrations/paymo/migrate-users');
+  if (migrateClientsBtn) migrateClientsBtn.onclick = () => startRun('/integrations/paymo/migrate-clients');
   stopBtn.onclick = async () => {
     stopBtn.disabled = true;
     try { await API.post('/integrations/paymo/stop'); runMsg.innerHTML = `<div class="alert alert-warning py-1">${I18N.t('intg.stopping')}</div>`; }
@@ -188,6 +191,7 @@
   };
 
   document.addEventListener('lang-changed', () => location.reload());
+  setRunning(false); // start in the not-running state so per-project Migrate buttons are enabled
   await loadStatus();
   await loadJobs();
   await loadCatalog();

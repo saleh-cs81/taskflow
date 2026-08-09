@@ -22,7 +22,7 @@
       msg.innerHTML = `<div class="alert alert-success">${I18N.t('accept.success')}</div>`;
       // Auto sign-in with the credentials just created.
       await Auth.login(result.email, password);
-      location.href = '/dashboard.html';
+      location.href = '/home.html';
     } catch (ex) {
       msg.innerHTML = `<div class="alert alert-danger">${ex.problem?.title || I18N.t('accept.invalid')}</div>`;
     }
