@@ -242,9 +242,12 @@ public class TaskService(
         var task = await db.Tasks.FirstOrDefaultAsync(t => t.Id == taskId, ct)
             ?? throw new NotFoundAppException("error.not_found");
         var a = await db.TaskAssignees.FirstOrDefaultAsync(x => x.TaskId == taskId && x.UserId == userId, ct);
-        if (a is null) return;
-        db.TaskAssignees.Remove(a);
-        if (task.AssigneeId == userId)
+        var wasPrimary = task.AssigneeId == userId;
+        if (a is null && !wasPrimary) return; // user isn't assigned to this task at all
+        if (a is not null) db.TaskAssignees.Remove(a);
+        // Reassign the primary to another assignee (or clear it). Also covers legacy tasks whose
+        // primary assignee was set at creation without a TaskAssignees join row.
+        if (wasPrimary)
             task.AssigneeId = await db.TaskAssignees
                 .Where(x => x.TaskId == taskId && x.UserId != userId)
                 .Select(x => (long?)x.UserId).FirstOrDefaultAsync(ct);
