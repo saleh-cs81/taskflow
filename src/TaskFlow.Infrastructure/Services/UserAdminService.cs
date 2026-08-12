@@ -84,6 +84,31 @@ public class UserAdminService(IAppDbContext db, ICurrentUser currentUser, IPassw
         => await db.Roles.AsNoTracking().OrderBy(r => r.Name)
             .Select(r => new RoleDto(r.Id, r.Name, r.IsSystemRole)).ToListAsync(ct);
 
+    public async Task<IReadOnlyList<PermissionDto>> ListPermissionsAsync(CancellationToken ct = default)
+        => await db.Permissions.AsNoTracking().OrderBy(p => p.Group).ThenBy(p => p.Code)
+            .Select(p => new PermissionDto(p.Code, p.Group)).ToListAsync(ct);
+
+    public async Task<IReadOnlyList<string>> GetRolePermissionsAsync(long roleId, CancellationToken ct = default)
+        => await db.RolePermissions.AsNoTracking().Where(rp => rp.RoleId == roleId)
+            .Select(rp => rp.Permission.Code).ToListAsync(ct);
+
+    // Replace a role's permission set. The two admin roles are locked so an admin can't strip their own access.
+    public async Task SetRolePermissionsAsync(long roleId, RolePermissionsRequest request, CancellationToken ct = default)
+    {
+        var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == roleId, ct)
+            ?? throw new NotFoundAppException("error.not_found");
+        if (role.IsSystemRole && (role.Name == "CompanyAdmin" || role.Name == "SuperAdmin"))
+            throw new ConflictAppException("error.role_locked");
+
+        var codes = (request.Permissions ?? new List<string>()).Distinct().ToList();
+        var permIds = await db.Permissions.Where(p => codes.Contains(p.Code)).Select(p => p.Id).ToListAsync(ct);
+        var current = await db.RolePermissions.Where(rp => rp.RoleId == roleId).ToListAsync(ct);
+        db.RolePermissions.RemoveRange(current.Where(rp => !permIds.Contains(rp.PermissionId)));
+        foreach (var pid in permIds.Where(pid => current.All(rp => rp.PermissionId != pid)))
+            db.RolePermissions.Add(new RolePermission { RoleId = roleId, PermissionId = pid });
+        await db.SaveChangesAsync(ct);
+    }
+
     private async Task<ILookup<long, string>> BuildRoleMap(List<long> userIds, CancellationToken ct)
     {
         var rows = await (

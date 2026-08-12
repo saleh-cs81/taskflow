@@ -59,4 +59,23 @@ public class RolesController(IUserAdminService users) : ControllerBase
     [RequirePermission(Permissions.Users.View)]
     public async Task<ActionResult<IReadOnlyList<RoleDto>>> List(CancellationToken ct)
         => Ok(await users.ListRolesAsync(ct));
+
+    // Full permission catalogue (for the roles & permissions editor).
+    [HttpGet("~/api/v1/permissions")]
+    [RequirePermission(Permissions.Users.View)]
+    public async Task<ActionResult<IReadOnlyList<PermissionDto>>> Catalog(CancellationToken ct)
+        => Ok(await users.ListPermissionsAsync(ct));
+
+    [HttpGet("{id:long}/permissions")]
+    [RequirePermission(Permissions.Users.View)]
+    public async Task<ActionResult<IReadOnlyList<string>>> GetPermissions(long id, CancellationToken ct)
+        => Ok(await users.GetRolePermissionsAsync(id, ct));
+
+    [HttpPut("{id:long}/permissions")]
+    [RequirePermission(Permissions.Users.Manage)]
+    public async Task<IActionResult> SetPermissions(long id, RolePermissionsRequest request, CancellationToken ct)
+    {
+        await users.SetRolePermissionsAsync(id, request, ct);
+        return NoContent();
+    }
 }
