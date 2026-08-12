@@ -55,6 +55,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<TaskAssignee> TaskAssignees => Set<TaskAssignee>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<DepartmentAdmin> DepartmentAdmins => Set<DepartmentAdmin>();
+    public DbSet<DepartmentMember> DepartmentMembers => Set<DepartmentMember>();
     public DbSet<Discussion> Discussions => Set<Discussion>();
     public DbSet<DiscussionPost> DiscussionPosts => Set<DiscussionPost>();
 
@@ -194,6 +195,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             b.ToTable("DepartmentAdmins");
             b.HasIndex(x => new { x.DepartmentId, x.UserId }).IsUnique();
             b.HasOne(x => x.Department).WithMany(d => d.Admins).HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
+        });
+        modelBuilder.Entity<DepartmentMember>(b =>
+        {
+            b.ToTable("DepartmentMembers");
+            b.HasIndex(x => new { x.DepartmentId, x.UserId }).IsUnique();
+            b.HasOne(x => x.Department).WithMany(d => d.Members).HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.Cascade);
             b.HasQueryFilter(e => !e.IsDeleted && (tenant.IsSuperAdmin || e.TenantId == tenant.TenantId));
         });
         modelBuilder.Entity<Discussion>(b =>

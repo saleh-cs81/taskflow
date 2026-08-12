@@ -39,10 +39,20 @@ public class Department : TenantEntity
     public string? CodePrefix { get; set; }
 
     public ICollection<DepartmentAdmin> Admins { get; set; } = new List<DepartmentAdmin>();
+    public ICollection<DepartmentMember> Members { get; set; } = new List<DepartmentMember>();
 }
 
 // A user who administers a department (a user may admin several departments).
 public class DepartmentAdmin : TenantEntity
+{
+    public long DepartmentId { get; set; }
+    public long UserId { get; set; }
+
+    public Department Department { get; set; } = null!;
+}
+
+// A user who is a team member of a department (a user may belong to several departments).
+public class DepartmentMember : TenantEntity
 {
     public long DepartmentId { get; set; }
     public long UserId { get; set; }

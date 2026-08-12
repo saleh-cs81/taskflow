@@ -19,10 +19,11 @@ public record ClientInvoiceDto(long Id, string Number, InvoiceStatus Status, Dat
 public record ClientTimesheetRowDto(long ProjectId, string ProjectName, double Hours, double BillableHours);
 
 public record DepartmentAdminDto(long UserId, string FullName, string Email);
+public record DepartmentMemberDto(long UserId, string FullName, string Email);
 public record DepartmentDto(
     long Id, string Name, string? CodePrefix, long? ManagerUserId,
-    IReadOnlyList<DepartmentAdminDto> Admins, int ProjectCount);
-public record DepartmentRequest(string Name, string? CodePrefix, long? ManagerUserId, IReadOnlyList<long>? AdminUserIds);
+    IReadOnlyList<DepartmentAdminDto> Admins, IReadOnlyList<DepartmentMemberDto> Members, int ProjectCount);
+public record DepartmentRequest(string Name, string? CodePrefix, long? ManagerUserId, IReadOnlyList<long>? AdminUserIds, IReadOnlyList<long>? MemberUserIds = null);
 
 public record CategoryDto(long Id, string Name, string? Color);
 public record CategoryRequest(string Name, string? Color);

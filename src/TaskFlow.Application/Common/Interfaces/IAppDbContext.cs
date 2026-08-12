@@ -57,6 +57,7 @@ public interface IAppDbContext
     DbSet<TaskAssignee> TaskAssignees { get; }
     DbSet<Department> Departments { get; }
     DbSet<DepartmentAdmin> DepartmentAdmins { get; }
+    DbSet<DepartmentMember> DepartmentMembers { get; }
     DbSet<Discussion> Discussions { get; }
     DbSet<DiscussionPost> DiscussionPosts { get; }
 

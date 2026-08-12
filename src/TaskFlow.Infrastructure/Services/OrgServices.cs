@@ -124,6 +124,10 @@ public class DepartmentService(IAppDbContext db, IDepartmentAccess access) : IDe
                             join u in db.Users.AsNoTracking() on da.UserId equals u.Id
                             where ids.Contains(da.DepartmentId)
                             select new { da.DepartmentId, da.UserId, u.FullName, u.Email }).ToListAsync(ct);
+        var members = await (from dm in db.DepartmentMembers.AsNoTracking()
+                             join u in db.Users.AsNoTracking() on dm.UserId equals u.Id
+                             where ids.Contains(dm.DepartmentId)
+                             select new { dm.DepartmentId, dm.UserId, u.FullName, u.Email }).ToListAsync(ct);
         var counts = await db.Projects.AsNoTracking()
             .Where(p => p.DepartmentId != null && ids.Contains(p.DepartmentId!.Value))
             .GroupBy(p => p.DepartmentId!.Value)
@@ -132,6 +136,8 @@ public class DepartmentService(IAppDbContext db, IDepartmentAccess access) : IDe
             d.Id, d.Name, d.CodePrefix, d.ManagerUserId,
             admins.Where(a => a.DepartmentId == d.Id)
                   .Select(a => new DepartmentAdminDto(a.UserId, a.FullName, a.Email)).ToList(),
+            members.Where(m => m.DepartmentId == d.Id)
+                   .Select(m => new DepartmentMemberDto(m.UserId, m.FullName, m.Email)).ToList(),
             counts.FirstOrDefault(c => c.DepartmentId == d.Id)?.Count ?? 0)).ToList();
     }
 
@@ -142,6 +148,7 @@ public class DepartmentService(IAppDbContext db, IDepartmentAccess access) : IDe
         db.Departments.Add(d);
         await db.SaveChangesAsync(ct);
         await SetAdminsAsync(d.Id, r.AdminUserIds, ct);
+        await SetMembersAsync(d.Id, r.MemberUserIds, ct);
         return (await ToDtosAsync(new List<Department> { d }, ct))[0];
     }
 
@@ -151,6 +158,7 @@ public class DepartmentService(IAppDbContext db, IDepartmentAccess access) : IDe
         if (string.IsNullOrWhiteSpace(r.Name)) throw new ValidationAppException("error.validation");
         d.Name = r.Name.Trim(); d.CodePrefix = Norm(r.CodePrefix); d.ManagerUserId = r.ManagerUserId;
         await SetAdminsAsync(d.Id, r.AdminUserIds, ct);
+        await SetMembersAsync(d.Id, r.MemberUserIds, ct);
         return (await ToDtosAsync(new List<Department> { d }, ct))[0];
     }
 
@@ -159,6 +167,7 @@ public class DepartmentService(IAppDbContext db, IDepartmentAccess access) : IDe
         var d = await db.Departments.FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw new NotFoundAppException("error.not_found");
         foreach (var p in await db.Projects.Where(p => p.DepartmentId == id).ToListAsync(ct)) p.DepartmentId = null;
         db.DepartmentAdmins.RemoveRange(await db.DepartmentAdmins.Where(a => a.DepartmentId == id).ToListAsync(ct));
+        db.DepartmentMembers.RemoveRange(await db.DepartmentMembers.Where(m => m.DepartmentId == id).ToListAsync(ct));
         db.Departments.Remove(d);
         await db.SaveChangesAsync(ct);
     }
@@ -171,6 +180,17 @@ public class DepartmentService(IAppDbContext db, IDepartmentAccess access) : IDe
         var have = existing.Select(a => a.UserId).ToHashSet();
         foreach (var uid in want.Where(u => !have.Contains(u)))
             db.DepartmentAdmins.Add(new DepartmentAdmin { DepartmentId = deptId, UserId = uid });
+        await db.SaveChangesAsync(ct);
+    }
+
+    private async Task SetMembersAsync(long deptId, IReadOnlyList<long>? userIds, CancellationToken ct)
+    {
+        var existing = await db.DepartmentMembers.Where(m => m.DepartmentId == deptId).ToListAsync(ct);
+        var want = (userIds ?? new List<long>()).Distinct().ToHashSet();
+        foreach (var m in existing.Where(m => !want.Contains(m.UserId))) db.DepartmentMembers.Remove(m);
+        var have = existing.Select(m => m.UserId).ToHashSet();
+        foreach (var uid in want.Where(u => !have.Contains(u)))
+            db.DepartmentMembers.Add(new DepartmentMember { DepartmentId = deptId, UserId = uid });
         await db.SaveChangesAsync(ct);
     }
 
