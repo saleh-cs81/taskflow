@@ -34,6 +34,7 @@ public class InvitationService(
         var invitation = new Invitation
         {
             Email = r.Email.Trim(),
+            FullName = string.IsNullOrWhiteSpace(r.FullName) ? null : r.FullName.Trim(),
             RoleId = r.RoleId,
             TokenHash = jwt.HashRefreshToken(rawToken),
             ExpiresUtc = clock.UtcNow.AddDays(7),
@@ -96,7 +97,8 @@ public class InvitationService(
             TenantId = inv.TenantId,
             Email = inv.Email,
             NormalizedEmail = normalizedEmail,
-            FullName = r.FullName.Trim(),
+            // Admin-provided name at invite time wins; otherwise use what the user typed on the accept screen.
+            FullName = !string.IsNullOrWhiteSpace(inv.FullName) ? inv.FullName.Trim() : r.FullName.Trim(),
             PasswordHash = hasher.Hash(r.Password),
             IsActive = true,
             EmailConfirmed = true

@@ -6,6 +6,7 @@ namespace TaskFlow.Domain.Entities;
 public class Invitation : TenantEntity
 {
     public string Email { get; set; } = string.Empty;
+    public string? FullName { get; set; }
     public long RoleId { get; set; }
     public string TokenHash { get; set; } = string.Empty;
     public DateTime ExpiresUtc { get; set; }

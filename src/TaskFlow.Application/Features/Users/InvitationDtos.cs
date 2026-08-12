@@ -2,7 +2,7 @@ using TaskFlow.Domain.Enums;
 
 namespace TaskFlow.Application.Features.Users;
 
-public record InviteRequest(string Email, long RoleId);
+public record InviteRequest(string Email, long RoleId, string? FullName = null);
 
 public record InvitationDto(
     long Id,
