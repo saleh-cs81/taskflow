@@ -31,6 +31,21 @@ public class NotificationService(
             notification.LinkUrl, false, notification.CreatedAtUtc), ct);
     }
 
+    public async Task CreateManyAsync(IEnumerable<CreateNotification> items, CancellationToken ct = default)
+    {
+        var list = items as IReadOnlyList<CreateNotification> ?? items.ToList();
+        if (list.Count == 0) return;
+        var entities = list.Select(n => new Notification
+        {
+            UserId = n.UserId, Type = n.Type, Title = n.Title, Body = n.Body, LinkUrl = n.LinkUrl, IsRead = false
+        }).ToList();
+        db.Notifications.AddRange(entities);
+        await db.SaveChangesAsync(ct);
+        foreach (var e in entities)
+            await realtime.NotifyUserAsync(e.UserId, "notification", new NotificationDto(
+                e.Id, e.Type, e.Title, e.Body, e.LinkUrl, false, e.CreatedAtUtc), ct);
+    }
+
     public async Task<IReadOnlyList<NotificationDto>> ListAsync(bool unreadOnly, CancellationToken ct = default)
     {
         var uid = currentUser.UserId ?? throw new UnauthorizedAppException("error.unauthorized");

@@ -174,9 +174,16 @@ public class DepartmentService(IAppDbContext db, IDepartmentAccess access) : IDe
 
     private async Task SetAdminsAsync(long deptId, IReadOnlyList<long>? userIds, CancellationToken ct)
     {
-        var existing = await db.DepartmentAdmins.Where(a => a.DepartmentId == deptId).ToListAsync(ct);
         var want = (userIds ?? new List<long>()).Distinct().ToHashSet();
-        foreach (var a in existing.Where(a => !want.Contains(a.UserId))) db.DepartmentAdmins.Remove(a);
+        // Include soft-deleted rows (IgnoreQueryFilters): the unique index isn't filtered on IsDeleted,
+        // so we must reactivate a previously-removed row instead of inserting a duplicate.
+        var existing = await db.DepartmentAdmins.IgnoreQueryFilters().Where(a => a.DepartmentId == deptId).ToListAsync(ct);
+        foreach (var a in existing)
+        {
+            var shouldHave = want.Contains(a.UserId);
+            if (shouldHave && a.IsDeleted) { a.IsDeleted = false; a.DeletedAtUtc = null; }
+            else if (!shouldHave && !a.IsDeleted) db.DepartmentAdmins.Remove(a);
+        }
         var have = existing.Select(a => a.UserId).ToHashSet();
         foreach (var uid in want.Where(u => !have.Contains(u)))
             db.DepartmentAdmins.Add(new DepartmentAdmin { DepartmentId = deptId, UserId = uid });
@@ -185,9 +192,14 @@ public class DepartmentService(IAppDbContext db, IDepartmentAccess access) : IDe
 
     private async Task SetMembersAsync(long deptId, IReadOnlyList<long>? userIds, CancellationToken ct)
     {
-        var existing = await db.DepartmentMembers.Where(m => m.DepartmentId == deptId).ToListAsync(ct);
         var want = (userIds ?? new List<long>()).Distinct().ToHashSet();
-        foreach (var m in existing.Where(m => !want.Contains(m.UserId))) db.DepartmentMembers.Remove(m);
+        var existing = await db.DepartmentMembers.IgnoreQueryFilters().Where(m => m.DepartmentId == deptId).ToListAsync(ct);
+        foreach (var m in existing)
+        {
+            var shouldHave = want.Contains(m.UserId);
+            if (shouldHave && m.IsDeleted) { m.IsDeleted = false; m.DeletedAtUtc = null; }
+            else if (!shouldHave && !m.IsDeleted) db.DepartmentMembers.Remove(m);
+        }
         var have = existing.Select(m => m.UserId).ToHashSet();
         foreach (var uid in want.Where(u => !have.Contains(u)))
             db.DepartmentMembers.Add(new DepartmentMember { DepartmentId = deptId, UserId = uid });

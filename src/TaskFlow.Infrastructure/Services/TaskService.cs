@@ -389,9 +389,10 @@ public class TaskService(
 
         if (actor is { } me) recipients.Remove(me);
         if (exclude is not null) foreach (var e in exclude) recipients.Remove(e);
+        if (recipients.Count == 0) return;
 
-        foreach (var uid in recipients)
-            await notifications.CreateAsync(new CreateNotification(uid, type, title, body, link), ct);
+        await notifications.CreateManyAsync(
+            recipients.Select(uid => new CreateNotification(uid, type, title, body, link)), ct);
     }
 
     private async Task<double> NextPositionAsync(long? taskListId, CancellationToken ct)

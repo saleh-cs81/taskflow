@@ -89,8 +89,13 @@ public class UserAdminService(IAppDbContext db, ICurrentUser currentUser, IPassw
             .Select(p => new PermissionDto(p.Code, p.Group)).ToListAsync(ct);
 
     public async Task<IReadOnlyList<string>> GetRolePermissionsAsync(long roleId, CancellationToken ct = default)
-        => await db.RolePermissions.AsNoTracking().Where(rp => rp.RoleId == roleId)
+    {
+        // Validate the role belongs to the caller's tenant (db.Roles is tenant-filtered) to avoid a cross-tenant read.
+        _ = await db.Roles.AsNoTracking().FirstOrDefaultAsync(r => r.Id == roleId, ct)
+            ?? throw new NotFoundAppException("error.not_found");
+        return await db.RolePermissions.AsNoTracking().Where(rp => rp.RoleId == roleId)
             .Select(rp => rp.Permission.Code).ToListAsync(ct);
+    }
 
     // Replace a role's permission set. The two admin roles are locked so an admin can't strip their own access.
     public async Task SetRolePermissionsAsync(long roleId, RolePermissionsRequest request, CancellationToken ct = default)

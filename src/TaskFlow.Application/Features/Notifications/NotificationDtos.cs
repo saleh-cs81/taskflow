@@ -30,6 +30,8 @@ public record CreateNotification(
 public interface INotificationService
 {
     Task CreateAsync(CreateNotification notification, CancellationToken ct = default);
+    // Insert many notifications in a single SaveChanges (used when broadcasting to assignees + admins).
+    Task CreateManyAsync(IEnumerable<CreateNotification> notifications, CancellationToken ct = default);
     Task<IReadOnlyList<NotificationDto>> ListAsync(bool unreadOnly, CancellationToken ct = default);
     Task<int> UnreadCountAsync(CancellationToken ct = default);
     Task MarkReadAsync(long id, CancellationToken ct = default);
