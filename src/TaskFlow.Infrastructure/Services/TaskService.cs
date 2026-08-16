@@ -111,8 +111,10 @@ public class TaskService(
 
         await db.SaveChangesAsync(ct);
 
-        if (task.AssigneeId is not null && task.AssigneeId != previousAssignee)
-            await NotifyAssignee(task, ct);
+        if (r.Status == WorkStatus.Done && !wasDone)
+            await NotifyTaskAsync(task, "completed", NotificationType.TaskCompleted, null, null, ct);
+        else if (task.AssigneeId is not null && task.AssigneeId != previousAssignee)
+            await NotifyTaskAsync(task, "assigned", NotificationType.TaskAssigned, null, null, ct);
         return await GetAsync(id, ct);
     }
 
@@ -346,24 +348,50 @@ public class TaskService(
                 uid, NotificationType.Mention, "You were mentioned in a comment", comment.Body, link), ct);
         }
 
-        // Notify the task assignee (if not the author and not already mentioned).
+        // Notify assignees + company admins that a comment was posted (mentioned users already notified above).
         var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == taskId, ct);
-        if (task?.AssigneeId is { } assignee && assignee != authorId && !mentioned.Contains(assignee))
-        {
-            await notifications.CreateAsync(new CreateNotification(
-                assignee, NotificationType.TaskCommented, "New comment on your task", comment.Body, link), ct);
-        }
+        if (task is not null)
+            await NotifyTaskAsync(task, "commented on", NotificationType.TaskCommented, comment.Body, mentioned, ct);
 
         await activity.LogAsync("task.commented", "Task", taskId, ct);
         return new CommentDto(comment.Id, comment.AuthorId, comment.Body, comment.ParentCommentId, comment.CreatedAtUtc);
     }
 
     private async Task NotifyAssignee(TaskItem task, CancellationToken ct)
+        => await NotifyTaskAsync(task, "created", NotificationType.TaskAssigned, null, null, ct);
+
+    // Rich-text task notification ("Lama completed the SMTP task in cpt-jo.com") sent to every
+    // assignee of the task plus every company admin (minus the actor and any excluded users).
+    private async Task NotifyTaskAsync(TaskItem task, string verb, NotificationType type, string? body,
+        IEnumerable<long>? exclude, CancellationToken ct)
     {
-        if (task.AssigneeId is not { } assignee || assignee == currentUser.UserId) return;
-        await notifications.CreateAsync(new CreateNotification(
-            assignee, NotificationType.TaskAssigned,
-            "A task was assigned to you", task.Title, $"/tasks/{task.Id}"), ct);
+        var actor = currentUser.UserId;
+        var actorName = actor is { } aid
+            ? await db.Users.AsNoTracking().Where(u => u.Id == aid).Select(u => u.FullName).FirstOrDefaultAsync(ct) ?? "Someone"
+            : "Someone";
+        var projectName = await db.Projects.AsNoTracking().Where(p => p.Id == task.ProjectId)
+            .Select(p => p.Name).FirstOrDefaultAsync(ct);
+        var title = string.IsNullOrEmpty(projectName)
+            ? $"{actorName} {verb} the {task.Title} task"
+            : $"{actorName} {verb} the {task.Title} task in {projectName}";
+        var link = $"/board.html?projectId={task.ProjectId}&openTask={task.Id}";
+
+        var recipients = new HashSet<long>();
+        if (task.AssigneeId is { } primary) recipients.Add(primary);
+        foreach (var uid in await db.TaskAssignees.AsNoTracking().Where(a => a.TaskId == task.Id).Select(a => a.UserId).ToListAsync(ct))
+            recipients.Add(uid);
+        // Company admins receive every task notification.
+        var adminIds = await (from ur in db.UserRoles
+                              join ro in db.Roles on ur.RoleId equals ro.Id
+                              where ro.Name == "CompanyAdmin" || ro.Name == "SuperAdmin"
+                              select ur.UserId).Distinct().ToListAsync(ct);
+        foreach (var uid in adminIds) recipients.Add(uid);
+
+        if (actor is { } me) recipients.Remove(me);
+        if (exclude is not null) foreach (var e in exclude) recipients.Remove(e);
+
+        foreach (var uid in recipients)
+            await notifications.CreateAsync(new CreateNotification(uid, type, title, body, link), ct);
     }
 
     private async Task<double> NextPositionAsync(long? taskListId, CancellationToken ct)

@@ -16,5 +16,6 @@ public enum NotificationType
     TimesheetSubmitted = 4,
     TimesheetReviewed = 5,
     ProjectInvite = 6,
+    TaskCompleted = 7,
     Generic = 100
 }
