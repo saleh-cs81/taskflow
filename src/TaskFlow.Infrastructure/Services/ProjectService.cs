@@ -8,7 +8,7 @@ using TaskFlow.Domain.Enums;
 
 namespace TaskFlow.Infrastructure.Services;
 
-public class ProjectService(IAppDbContext db, IDepartmentAccess access) : IProjectService
+public class ProjectService(IAppDbContext db, IDepartmentAccess access, ICurrentUser currentUser) : IProjectService
 {
     public async Task<PagedResult<ProjectDto>> ListAsync(PageQuery page, ProjectStatus? status, string? search, long? departmentId, CancellationToken ct = default)
     {
@@ -18,12 +18,15 @@ public class ProjectService(IAppDbContext db, IDepartmentAccess access) : IProje
             query = query.Where(p => p.Name.Contains(search) || (p.Code != null && p.Code.Contains(search)));
         if (departmentId is not null) query = query.Where(p => p.DepartmentId == departmentId);
 
-        // Department scoping: company admins see all; a department admin sees only their departments'
-        // projects. A user who administers no department is unrestricted (unchanged behaviour).
+        // Scoping: company admins see all. Everyone else sees only projects they're a member of,
+        // plus projects in any department they administer (department admins).
         if (!access.IsCompanyAdmin)
         {
             var mine = await access.MyDepartmentIdsAsync(ct);
-            if (mine.Count > 0) query = query.Where(p => p.DepartmentId != null && mine.Contains(p.DepartmentId.Value));
+            var uid = currentUser.UserId;
+            query = query.Where(p =>
+                db.ProjectMembers.Any(m => m.ProjectId == p.Id && m.UserId == uid)
+                || (p.DepartmentId != null && mine.Contains(p.DepartmentId.Value)));
         }
 
         var total = await query.CountAsync(ct);
@@ -67,6 +70,10 @@ public class ProjectService(IAppDbContext db, IDepartmentAccess access) : IProje
         db.Projects.Add(project);
         await db.SaveChangesAsync(ct);
 
+        // Add the creator as a member so they see the project in their (now membership-scoped) list.
+        if (currentUser.UserId is { } creatorId)
+            db.ProjectMembers.Add(new ProjectMember { ProjectId = project.Id, UserId = creatorId, RoleInProject = "Owner" });
+
         // Seed a default Kanban board.
         db.TaskLists.AddRange(
             new TaskList { ProjectId = project.Id, Name = "To Do", Position = 1000 },
@@ -74,7 +81,7 @@ public class ProjectService(IAppDbContext db, IDepartmentAccess access) : IProje
             new TaskList { ProjectId = project.Id, Name = "Done", Position = 3000 });
         await db.SaveChangesAsync(ct);
 
-        return ToDto(project, 0);
+        return ToDto(project, currentUser.UserId is null ? 0 : 1);
     }
 
     public async Task<ProjectDto> UpdateAsync(long id, UpdateProjectRequest r, CancellationToken ct = default)
