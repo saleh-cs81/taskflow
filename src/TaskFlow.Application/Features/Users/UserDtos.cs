@@ -11,6 +11,9 @@ public record UserListItemDto(
 
 public record UpdateUserRequest(string FullName, bool IsActive, IReadOnlyList<long> RoleIds);
 
+// Create a user directly (no invitation): admin sets an initial password.
+public record CreateUserRequest(string Email, string FullName, long RoleId, string Password);
+
 // Admin sets a new password for another user (no current-password check; signs that user out everywhere).
 public record SetPasswordRequest(string NewPassword);
 
@@ -25,6 +28,8 @@ public interface IUserAdminService
     Task<IReadOnlyList<UserListItemDto>> ListAsync(CancellationToken ct = default);
     Task<UserListItemDto> GetAsync(long id, CancellationToken ct = default);
     Task<UserListItemDto> UpdateAsync(long id, UpdateUserRequest request, CancellationToken ct = default);
+    Task<UserListItemDto> CreateAsync(CreateUserRequest request, CancellationToken ct = default);
+    Task DeleteAsync(long id, CancellationToken ct = default);
     Task SetPasswordAsync(long id, string newPassword, CancellationToken ct = default);
     Task<IReadOnlyList<RoleDto>> ListRolesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<PermissionDto>> ListPermissionsAsync(CancellationToken ct = default);

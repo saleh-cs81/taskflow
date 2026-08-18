@@ -48,6 +48,48 @@ public class UserAdminService(IAppDbContext db, ICurrentUser currentUser, IPassw
         return ToDto(user, roleMap);
     }
 
+    // Create a user directly (no invitation) with an admin-set initial password.
+    public async Task<UserListItemDto> CreateAsync(CreateUserRequest r, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(r.Email)) throw new ValidationAppException("error.validation");
+        if (string.IsNullOrWhiteSpace(r.Password) || r.Password.Length < 8 || r.Password.Length > 128)
+            throw new ValidationAppException("auth.password_length");
+        var normalized = r.Email.Trim().ToUpperInvariant();
+        if (await db.Users.AnyAsync(u => u.NormalizedEmail == normalized, ct))
+            throw new ConflictAppException("error.conflict");
+        var role = await db.Roles.FirstOrDefaultAsync(x => x.Id == r.RoleId, ct)
+            ?? throw new NotFoundAppException("error.not_found");
+
+        var user = new User
+        {
+            Email = r.Email.Trim(),
+            NormalizedEmail = normalized,
+            FullName = (r.FullName ?? "").Trim(),
+            PasswordHash = hasher.Hash(r.Password),
+            IsActive = true,
+            EmailConfirmed = true
+        };
+        db.Users.Add(user);
+        await db.SaveChangesAsync(ct);
+        db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = role.Id });
+        await db.SaveChangesAsync(ct);
+
+        var roleMap = await BuildRoleMap([user.Id], ct);
+        return ToDto(user, roleMap);
+    }
+
+    // Soft-delete a user (revokes their sessions). Can't delete yourself.
+    public async Task DeleteAsync(long id, CancellationToken ct = default)
+    {
+        if (id == currentUser.UserId) throw new ValidationAppException("error.validation");
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct)
+            ?? throw new NotFoundAppException("error.not_found");
+        var tokens = await db.RefreshTokens.Where(t => t.UserId == id && t.RevokedUtc == null).ToListAsync(ct);
+        foreach (var t in tokens) t.RevokedUtc = clock.UtcNow;
+        db.Users.Remove(user); // soft-delete via the save interceptor
+        await db.SaveChangesAsync(ct);
+    }
+
     // Admin resets another user's password: hashes it, clears any reset token, revokes all their
     // refresh tokens (signs them out everywhere), and records an audit entry.
     public async Task SetPasswordAsync(long id, string newPassword, CancellationToken ct = default)

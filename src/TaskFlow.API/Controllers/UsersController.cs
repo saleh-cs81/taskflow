@@ -40,6 +40,20 @@ public class UsersController(
         return Ok(await users.UpdateAsync(id, request, ct));
     }
 
+    // Create a user directly (no invitation) with an admin-set initial password.
+    [HttpPost]
+    [RequirePermission(Permissions.Users.Manage)]
+    public async Task<ActionResult<UserListItemDto>> Create(CreateUserRequest request, CancellationToken ct)
+        => Ok(await users.CreateAsync(request, ct));
+
+    [HttpDelete("{id:long}")]
+    [RequirePermission(Permissions.Users.Manage)]
+    public async Task<IActionResult> Delete(long id, CancellationToken ct)
+    {
+        await users.DeleteAsync(id, ct);
+        return NoContent();
+    }
+
     // Admin resets a user's password (no current-password required; signs that user out everywhere).
     [HttpPost("{id:long}/password")]
     [RequirePermission(Permissions.Users.Manage)]
