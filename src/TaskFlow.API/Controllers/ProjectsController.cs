@@ -59,7 +59,7 @@ public class ProjectsController(
     }
 
     [HttpDelete("{id:long}")]
-    [RequirePermission(Permissions.Projects.Delete)]
+    [RequirePermission(Permissions.Projects.Update)]
     public async Task<IActionResult> Delete(long id, CancellationToken ct)
     {
         await projects.DeleteAsync(id, ct);
@@ -68,7 +68,7 @@ public class ProjectsController(
 
     // Hard-delete the project and ALL of its data (tasks, files, milestones, discussions, time, members).
     [HttpDelete("{id:long}/data")]
-    [RequirePermission(Permissions.Projects.Delete)]
+    [RequirePermission(Permissions.Projects.Update)]
     public async Task<IActionResult> PurgeData(long id, CancellationToken ct)
     {
         await projects.PurgeAsync(id, ct);
